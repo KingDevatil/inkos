@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.5.0
+
+英文原生写作 + 系统稳定性修复。
+
+### 英文小说写作
+
+- 10 个英文题材（LitRPG、Progression Fantasy、Isekai、Romantasy、Sci-Fi、Cozy Fantasy、Tower Climber、Dungeon Core、System Apocalypse、Cultivation）
+- `--lang en` 贯穿全管道：Architect 生成英文设定、Writer 英文创作、Settler 英文 truth files、Auditor 英文审计、Reviser 英文修订
+- 英文写后验证器：AI-tell 词检测（delve/tapestry/testament 等）、段落长度、疲劳词
+- 章节标题自动切换：`Chapter X:` vs `第X章`
+- EPUB 导出 lang 标签适配
+
+### 系统稳定性
+
+- 原子写入锁：`acquireBookLock` 从 stat+write 改为 `open("wx")` 排他创建，消除竞态
+- 调度器防重入：上一轮写作/雷达未完成时跳过新 tick
+- 修订一致性：revision 链使用 `finalContent` 而非原始内容，spot-fix 不再丢失
+- Agent override 客户端隔离：不同 API key 的 agent 不再共用连接
+- Daemon pid 清理：启动失败时自动删除残留 pid 文件
+- Studio 启动修复：构建后的 JS 用 node 而非 tsx 启动
+- Import resume 计数修正：`--resume-from` 正确报告实际处理数
+
+### CLI 增强
+
+- `inkos book delete <id>`：删除书籍及全部数据（`--force` 跳过确认）
+- `inkos status --chapters`：显示每章状态和 failed 章节的 critical issues
+- 审计 JSON 解析容错（#51）
+- `write_truth_file` agent 工具（#53）
+- 审计漂移纠偏自动注入状态卡（#52）
+
+---
+
 ## v0.4.6
 
 日志系统 + 流式兼容性 + 本地模型容错 + CLI 增强。
