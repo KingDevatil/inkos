@@ -20,7 +20,7 @@
 
 Open-source CLI agent that autonomously writes, audits, and revises novels — with human review gates that keep you in control.
 
-**Native English support！！！** — InkOS writes English fiction out of the box with 10 built-in genre profiles: LitRPG, Progression Fantasy, Isekai, Cultivation, System Apocalypse, Dungeon Core, Romantasy, Sci-Fi, Tower Climber, and Cozy Fantasy. Each genre includes dedicated pacing rules, fatigue word lists, audit dimensions, and prohibition sets tuned for English-language web fiction.
+**Native English support** — 10 built-in English genre profiles (LitRPG, Progression Fantasy, Isekai, Cultivation, and more) with dedicated pacing rules, fatigue word lists, and audit dimensions. Set `--lang en` and go.
 
 ## Quick Start
 
