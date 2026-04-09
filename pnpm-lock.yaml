@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
 
   packages/cli:
     dependencies:

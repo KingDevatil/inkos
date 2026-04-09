@@ -2,6 +2,38 @@ import { readFile, writeFile, mkdir, readdir, rm, stat, unlink, open } from "nod
 import { join } from "node:path";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
+// 审计配置类型
+interface AuditConfig {
+  dimensions: Array<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    weight: number;
+  }>;
+  scoring: {
+    baseScore: number;
+    penalties: {
+      auditIssue: number;
+      aiTellDensity: number;
+      paragraphWarning: number;
+    };
+    weights: {
+      auditPassRate: number;
+      aiTellDensity: number;
+      paragraphWarnings: number;
+      hookResolveRate: number;
+      duplicateTitles: number;
+    };
+  };
+  validationRules: {
+    bannedPatterns: string[];
+    bannedDashes: boolean;
+    transitionWordDensity: number;
+    fatigueWordLimit: number;
+    maxConsecutiveLe: number;
+    maxParagraphLength: number;
+  };
+}
 import { bootstrapStructuredStateFromMarkdown, resolveDurableStoryProgress } from "./state-bootstrap.js";
 
 export class StateManager {
@@ -502,4 +534,52 @@ export class StateManager {
       await writeFile(path, content, "utf-8");
     }
   }
+
+  /**
+   * 加载书籍的审计配置
+   * @param bookId 书籍ID
+   * @returns 审计配置
+   */
+  async loadAuditConfig(bookId: string): Promise<AuditConfig | null> {
+    return this.loadAuditConfigAt(this.bookDir(bookId));
+  }
+
+  /**
+   * 在指定目录加载审计配置
+   * @param bookDir 书籍目录路径
+   * @returns 审计配置
+   */
+  async loadAuditConfigAt(bookDir: string): Promise<AuditConfig | null> {
+    const configPath = join(bookDir, "audit-config.json");
+    try {
+      const raw = await readFile(configPath, "utf-8");
+      return JSON.parse(raw) as AuditConfig;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 保存书籍的审计配置
+   * @param bookId 书籍ID
+   * @param config 审计配置
+   */
+  async saveAuditConfig(bookId: string, config: AuditConfig): Promise<void> {
+    await this.saveAuditConfigAt(this.bookDir(bookId), config);
+  }
+
+  /**
+   * 在指定目录保存审计配置
+   * @param bookDir 书籍目录路径
+   * @param config 审计配置
+   */
+  async saveAuditConfigAt(bookDir: string, config: AuditConfig): Promise<void> {
+    await mkdir(bookDir, { recursive: true });
+    await writeFile(
+      join(bookDir, "audit-config.json"),
+      JSON.stringify(config, null, 2),
+      "utf-8",
+    );
+  }
 }
+

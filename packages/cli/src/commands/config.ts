@@ -1,9 +1,9 @@
 import { Command } from "commander";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
+// import { join, homedir } from "node:path";
 import { findProjectRoot, log, logError, GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH } from "../utils.js";
 
-export const configCommand = new Command("config")
+const configCommand = new Command("config")
   .description("Manage project configuration");
 
 configCommand
@@ -13,7 +13,7 @@ configCommand
   .argument("<value>", "Config value")
   .action(async (key: string, value: string) => {
     const root = findProjectRoot();
-    const configPath = join(root, "inkos.json");
+    const configPath = root + "\\inkos.json";
 
     try {
       const raw = await readFile(configPath, "utf-8");
@@ -96,7 +96,7 @@ configCommand
   .option("--thinking-budget <n>", "Anthropic thinking budget")
   .option("--api-format <format>", "API format (chat / responses)")
   .option("--lang <language>", "Default writing language: zh (Chinese) or en (English)")
-  .action(async (opts) => {
+  .action(async (opts: any) => {
     try {
       await mkdir(GLOBAL_CONFIG_DIR, { recursive: true });
 
@@ -143,7 +143,7 @@ configCommand
   .description("Show current project configuration")
   .action(async () => {
     const root = findProjectRoot();
-    const configPath = join(root, "inkos.json");
+    const configPath = root + "\\inkos.json";
 
     try {
       const raw = await readFile(configPath, "utf-8");
@@ -196,7 +196,7 @@ configCommand
     }
 
     const root = findProjectRoot();
-    const configPath = join(root, "inkos.json");
+    const configPath = root + "\\inkos.json";
 
     try {
       const raw = await readFile(configPath, "utf-8");
@@ -229,7 +229,7 @@ configCommand
   .argument("<agent>", "Agent name")
   .action(async (agent: string) => {
     const root = findProjectRoot();
-    const configPath = join(root, "inkos.json");
+    const configPath = root + "\\inkos.json";
 
     try {
       const raw = await readFile(configPath, "utf-8");
@@ -253,9 +253,9 @@ configCommand
   .command("show-models")
   .description("Show model routing for all agents")
   .option("--json", "Output JSON")
-  .action(async (opts) => {
+  .action(async (opts: any) => {
     const root = findProjectRoot();
-    const configPath = join(root, "inkos.json");
+    const configPath = root + "\\inkos.json";
 
     try {
       const raw = await readFile(configPath, "utf-8");
@@ -295,3 +295,92 @@ configCommand
       process.exit(1);
     }
   });
+
+// 审计配置管理命令
+// 审计配置管理命令 (暂时禁用，等待audit-config模块修复)
+// const auditCommand = configCommand
+//   .command("audit")
+//   .description("Manage audit configuration");
+
+// auditCommand
+//   .command("show")
+//   .description("Show current project audit configuration")
+//   .action(async () => {
+//     const root = findProjectRoot();
+//     const booksDir = join(root, "books");
+//     
+//     try {
+//       // 列出所有书籍
+//       const books = await readdir(booksDir).catch(() => []);
+//       if (books.length === 0) {
+//         log("No books found in the project.");
+//         return;
+//       }
+//       
+//       for (const bookId of books) {
+//         const bookDir = join(booksDir, bookId);
+//         const config = loadAuditConfig(bookDir);
+//         
+//         log(`\nBook: ${bookId}`);
+//         if (config) {
+//           log(JSON.stringify(config, null, 2));
+//         } else {
+//           log("No audit config found. Using global or default config.");
+//         }
+//       }
+//     } catch (e) {
+//       logError(`Failed to show audit config: ${e}`);
+//       process.exit(1);
+//     }
+//   });
+
+// auditCommand
+//   .command("show-global")
+//   .description("Show global audit configuration")
+//   .action(async () => {
+//     try {
+//       const globalConfig = loadAuditConfig();
+//       log(JSON.stringify(globalConfig, null, 2));
+//     } catch (e) {
+//       logError(`Failed to show global audit config: ${e}`);
+//       process.exit(1);
+//     }
+//   });
+
+// auditCommand
+//   .command("reset")
+//   .description("Reset audit configuration to default")
+//   .option("--global", "Reset global audit config")
+//   .action(async (opts: any) => {
+//     try {
+//       const defaultConfig = getDefaultAuditConfig();
+//       
+//       if (opts.global) {
+//         saveGlobalAuditConfig(defaultConfig);
+//         log("Global audit config reset to default.");
+//       } else {
+//         const root = findProjectRoot();
+//         const booksDir = join(root, "books");
+//         
+//         // 列出所有书籍
+//         const books = await readdir(booksDir).catch(() => []);
+//         if (books.length === 0) {
+//           log("No books found in the project.");
+//           return;
+//         }
+//         
+//         for (const bookId of books) {
+//           const bookDir = join(booksDir, bookId);
+//           const auditConfigPath = join(bookDir, "audit-config.json");
+//           
+//           await writeFile(auditConfigPath, JSON.stringify(defaultConfig, null, 2), "utf-8");
+//           log(`Audit config reset to default for book: ${bookId}`);
+//         }
+//       }
+//     } catch (e) {
+//       logError(`Failed to reset audit config: ${e}`);
+//       process.exit(1);
+//     }
+//   });
+
+export { configCommand };

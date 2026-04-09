@@ -111,6 +111,10 @@ export function BookDetail({
   const [settingsStatus, setSettingsStatus] = useState<BookStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
+  const [auditConfig, setAuditConfig] = useState<any>(null);
+  const [loadingAuditConfig, setLoadingAuditConfig] = useState(false);
+  const [savingAuditConfig, setSavingAuditConfig] = useState(false);
+  const [showAuditConfig, setShowAuditConfig] = useState(false);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -320,6 +324,36 @@ export function BookDetail({
     refetch();
   };
 
+  const loadAuditConfig = async () => {
+    setLoadingAuditConfig(true);
+    try {
+      const config = await fetchJson(`/books/${bookId}/audit-config`);
+      setAuditConfig(config);
+      setShowAuditConfig(true);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to load audit config");
+    } finally {
+      setLoadingAuditConfig(false);
+    }
+  };
+
+  const saveAuditConfig = async () => {
+    if (!auditConfig) return;
+    setSavingAuditConfig(true);
+    try {
+      await fetchJson(`/books/${bookId}/audit-config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(auditConfig),
+      });
+      alert(t("common.saveSuccess"));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to save audit config");
+    } finally {
+      setSavingAuditConfig(false);
+    }
+  };
+
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-32 space-y-4">
       <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
@@ -462,6 +496,14 @@ export function BookDetail({
           >
             <RefreshCw size={14} />
             {t("book.fixOrder")}
+          </button>
+          <button
+            onClick={loadAuditConfig}
+            disabled={loadingAuditConfig}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50 disabled:opacity-50"
+          >
+            {loadingAuditConfig ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <ShieldCheck size={14} />}
+            审计配置
           </button>
           <div className="flex items-center gap-2">
             <select
@@ -725,6 +767,401 @@ export function BookDetail({
         onConfirm={handleDeleteBook}
         onCancel={() => setConfirmDeleteOpen(false)}
       />
+
+      {/* Audit Config Modal */}
+      {showAuditConfig && auditConfig && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card rounded-2xl shadow-xl max-w-4xl w-full max-h-[80vh] overflow-y-auto p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold">审计配置</h2>
+              <button
+                onClick={() => setShowAuditConfig(false)}
+                className="p-2 rounded-lg hover:bg-primary/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {/* Dimensions */}
+              <div>
+                <h3 className="text-sm font-bold mb-3">审计维度</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {auditConfig.dimensions.map((dim: any, index: number) => (
+                    <div key={dim.id} className="flex items-center gap-2 p-3 rounded-lg border border-border/50">
+                      <input
+                        type="checkbox"
+                        checked={dim.enabled}
+                        onChange={(e) => {
+                          const updated = [...auditConfig.dimensions];
+                          updated[index] = { ...updated[index], enabled: e.target.checked };
+                          setAuditConfig({ ...auditConfig, dimensions: updated });
+                        }}
+                        className="rounded border-border/50"
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium">{dim.name}</div>
+                        <div className="text-xs text-muted-foreground">ID: {dim.id}</div>
+                      </div>
+                      <div className="w-20">
+                        <input
+                          type="number"
+                          value={dim.weight}
+                          onChange={(e) => {
+                            const updated = [...auditConfig.dimensions];
+                            updated[index] = { ...updated[index], weight: Number(e.target.value) };
+                            setAuditConfig({ ...auditConfig, dimensions: updated });
+                          }}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Scoring */}
+              <div>
+                <h3 className="text-sm font-bold mb-3">评分规则</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">基础分</h4>
+                    <input
+                      type="number"
+                      value={auditConfig.scoring.baseScore}
+                      onChange={(e) => {
+                        setAuditConfig({
+                          ...auditConfig,
+                          scoring: {
+                            ...auditConfig.scoring,
+                            baseScore: Number(e.target.value)
+                          }
+                        });
+                      }}
+                      className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                    />
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">惩罚值</h4>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs">审计问题:</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.penalties.auditIssue}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                penalties: {
+                                  ...auditConfig.scoring.penalties,
+                                  auditIssue: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          className="w-16 px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs">AI痕迹:</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.penalties.aiTellDensity}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                penalties: {
+                                  ...auditConfig.scoring.penalties,
+                                  aiTellDensity: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          className="w-16 px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs">段落问题:</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.penalties.paragraphWarning}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                penalties: {
+                                  ...auditConfig.scoring.penalties,
+                                  paragraphWarning: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          className="w-16 px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50 md:col-span-2">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">权重</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                      <div>
+                        <span className="text-xs block mb-1">审计通过率</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.weights.auditPassRate}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                weights: {
+                                  ...auditConfig.scoring.weights,
+                                  auditPassRate: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-xs block mb-1">AI痕迹</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.weights.aiTellDensity}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                weights: {
+                                  ...auditConfig.scoring.weights,
+                                  aiTellDensity: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-xs block mb-1">段落问题</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.weights.paragraphWarnings}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                weights: {
+                                  ...auditConfig.scoring.weights,
+                                  paragraphWarnings: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-xs block mb-1">伏笔回收</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.weights.hookResolveRate}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                weights: {
+                                  ...auditConfig.scoring.weights,
+                                  hookResolveRate: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-xs block mb-1">标题重复</span>
+                        <input
+                          type="number"
+                          value={auditConfig.scoring.weights.duplicateTitles}
+                          onChange={(e) => {
+                            setAuditConfig({
+                              ...auditConfig,
+                              scoring: {
+                                ...auditConfig.scoring,
+                                weights: {
+                                  ...auditConfig.scoring.weights,
+                                  duplicateTitles: Number(e.target.value)
+                                }
+                              }
+                            });
+                          }}
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Validation Rules */}
+              <div>
+                <h3 className="text-sm font-bold mb-3">验证规则</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">禁止句式</h4>
+                    <input
+                      type="text"
+                      value={auditConfig.validationRules.bannedPatterns.join(", ")}
+                      onChange={(e) => {
+                        setAuditConfig({
+                          ...auditConfig,
+                          validationRules: {
+                            ...auditConfig.validationRules,
+                            bannedPatterns: e.target.value.split(",").map((p) => p.trim()).filter(Boolean)
+                          }
+                        });
+                      }}
+                      className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      placeholder="例如: 不是……而是……"
+                    />
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">禁止破折号</h4>
+                    <input
+                      type="checkbox"
+                      checked={auditConfig.validationRules.bannedDashes}
+                      onChange={(e) => {
+                        setAuditConfig({
+                          ...auditConfig,
+                          validationRules: {
+                            ...auditConfig.validationRules,
+                            bannedDashes: e.target.checked
+                          }
+                        });
+                      }}
+                      className="rounded border-border/50"
+                    />
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">转折词密度</h4>
+                    <input
+                      type="number"
+                      value={auditConfig.validationRules.transitionWordDensity}
+                      onChange={(e) => {
+                        setAuditConfig({
+                          ...auditConfig,
+                          validationRules: {
+                            ...auditConfig.validationRules,
+                            transitionWordDensity: Number(e.target.value)
+                          }
+                        });
+                      }}
+                      className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                    />
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">高疲劳词限制</h4>
+                    <input
+                      type="number"
+                      value={auditConfig.validationRules.fatigueWordLimit}
+                      onChange={(e) => {
+                        setAuditConfig({
+                          ...auditConfig,
+                          validationRules: {
+                            ...auditConfig.validationRules,
+                            fatigueWordLimit: Number(e.target.value)
+                          }
+                        });
+                      }}
+                      className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                    />
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">连续了字</h4>
+                    <input
+                      type="number"
+                      value={auditConfig.validationRules.maxConsecutiveLe}
+                      onChange={(e) => {
+                        setAuditConfig({
+                          ...auditConfig,
+                          validationRules: {
+                            ...auditConfig.validationRules,
+                            maxConsecutiveLe: Number(e.target.value)
+                          }
+                        });
+                      }}
+                      className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                    />
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50">
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2">段落长度</h4>
+                    <input
+                      type="number"
+                      value={auditConfig.validationRules.maxParagraphLength}
+                      onChange={(e) => {
+                        setAuditConfig({
+                          ...auditConfig,
+                          validationRules: {
+                            ...auditConfig.validationRules,
+                            maxParagraphLength: Number(e.target.value)
+                          }
+                        });
+                      }}
+                      className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Save Button */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-border/50">
+                <button
+                  onClick={() => setShowAuditConfig(false)}
+                  className="px-4 py-2 text-sm font-bold bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-all border border-border/50"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={saveAuditConfig}
+                  disabled={savingAuditConfig}
+                  className="px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+                >
+                  {savingAuditConfig ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Save size={14} />}
+                  {savingAuditConfig ? "保存中" : "保存"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

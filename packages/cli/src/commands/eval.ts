@@ -33,13 +33,13 @@ interface BookEval {
   readonly qualityTrend: ReadonlyArray<{ chapter: number; score: number }>;
 }
 
-function computeChapterScore(ch: ChapterEval): number {
+function computeChapterScore(ch: ChapterEval, penalties: { auditIssue: number; aiTellDensity: number; paragraphWarning: number }): number {
   // Per-chapter quality score (0-100)
   // Penalties: audit issues, AI tells, paragraph problems
   let score = 100;
-  score -= ch.auditIssueCount * 5; // -5 per audit issue
-  score -= ch.aiTellDensity * 20;  // -20 per AI tell per 1k chars
-  score -= ch.paragraphWarnings * 3; // -3 per paragraph warning
+  score -= ch.auditIssueCount * penalties.auditIssue; // penalty per audit issue
+  score -= ch.aiTellDensity * penalties.aiTellDensity;  // penalty per AI tell per 1k chars
+  score -= ch.paragraphWarnings * penalties.paragraphWarning; // penalty per paragraph warning
   return Math.max(0, Math.min(100, score));
 }
 
@@ -56,6 +56,26 @@ export const evalCommand = new Command("eval")
       const index = await state.loadChapterIndex(bookId);
       const bookDir = state.bookDir(bookId);
       const chaptersDir = join(bookDir, "chapters");
+      
+      // 默认审计配置
+      const defaultAuditConfig = {
+        scoring: {
+          penalties: {
+            auditIssue: 5,
+            aiTellDensity: 20,
+            paragraphWarning: 3
+          },
+          weights: {
+            auditPassRate: 0.3,
+            aiTellDensity: 0.25,
+            paragraphWarnings: 0.15,
+            hookResolveRate: 0.2,
+            duplicateTitles: 0.1
+          }
+        }
+      };
+      const penalties = defaultAuditConfig.scoring.penalties;
+      const weights = defaultAuditConfig.scoring.weights;
 
       // Parse chapter range
       let startCh = 1;
@@ -67,18 +87,18 @@ export const evalCommand = new Command("eval")
       }
 
       const filteredIndex = index.filter(
-        (ch) => ch.number >= startCh && ch.number <= endCh,
+        (ch: any) => ch.number >= startCh && ch.number <= endCh,
       );
 
       // Read chapter files and evaluate each
       const chapterFiles = await readdir(chaptersDir).catch(() => [] as string[]);
-      const allTitles = index.map((ch) => ch.title);
+      const allTitles = index.map((ch: any) => ch.title);
       const chapterEvals: ChapterEval[] = [];
 
       for (const ch of filteredIndex) {
         const paddedNum = String(ch.number).padStart(4, "0");
         const file = chapterFiles.find(
-          (f) => f.startsWith(paddedNum) && f.endsWith(".md"),
+          (f: string) => f.startsWith(paddedNum) && f.endsWith(".md"),
         );
         let content = "";
         if (file) {
@@ -148,23 +168,23 @@ export const evalCommand = new Command("eval")
 
       // Quality score: weighted composite (0-100)
       const qualityScore = Math.round(
-        analytics.auditPassRate * 0.3 +                        // 30% audit
-        Math.max(0, 100 - avgAiTellDensity * 30) * 0.25 +     // 25% AI tells
-        Math.max(0, 100 - avgParagraphWarnings * 10) * 0.15 +  // 15% paragraphs
-        hookResolveRate * 0.2 +                                 // 20% hooks
-        Math.max(0, 100 - duplicateTitles * 20) * 0.1,         // 10% title dedup
+        analytics.auditPassRate * weights.auditPassRate +                        // audit weight
+        Math.max(0, 100 - avgAiTellDensity * 30) * weights.aiTellDensity +     // AI tells weight
+        Math.max(0, 100 - avgParagraphWarnings * 10) * weights.paragraphWarnings +  // paragraphs weight
+        hookResolveRate * weights.hookResolveRate +                                 // hooks weight
+        Math.max(0, 100 - duplicateTitles * 20) * weights.duplicateTitles,         // title dedup weight
       );
 
       // Quality trend (per-chapter scores)
       const qualityTrend = chapterEvals.map((ch) => ({
         chapter: ch.number,
-        score: computeChapterScore(ch),
+        score: computeChapterScore(ch, penalties),
       }));
 
       const result: BookEval = {
         bookId,
         totalChapters: filteredIndex.length,
-        totalWords: filteredIndex.reduce((s, c) => s + c.wordCount, 0),
+        totalWords: filteredIndex.reduce((s: number, c: any) => s + c.wordCount, 0),
         auditPassRate: analytics.auditPassRate,
         avgAiTellDensity: Math.round(avgAiTellDensity * 100) / 100,
         avgParagraphWarnings: Math.round(avgParagraphWarnings * 100) / 100,
@@ -215,3 +235,5 @@ export const evalCommand = new Command("eval")
       process.exit(1);
     }
   });
+
+

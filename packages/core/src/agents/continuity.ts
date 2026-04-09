@@ -9,6 +9,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
 import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
 import { join } from "node:path";
+const { loadAuditConfig } = require("../config/audit-config.js");
+
 
 export interface AuditResult {
   readonly passed: boolean;
@@ -229,51 +231,79 @@ function buildDimensionNote(
 }
 
 function buildDimensionList(
+  bookDir: string,
   gp: GenreProfile,
   bookRules: BookRules | null,
   language: PromptLanguage,
   hasParentCanon = false,
   fanficMode?: FanficMode,
 ): ReadonlyArray<{ readonly id: number; readonly name: string; readonly note: string }> {
-  const activeIds = new Set(gp.auditDimensions);
+  // 加载审计配置
+  const auditConfig = loadAuditConfig(bookDir);
+  
+  // 从配置中获取启用的维度
+  const activeDimensions = auditConfig.dimensions.filter((dim: { enabled: boolean }) => dim.enabled);
+  
+  // 构建维度ID到配置的映射
+  const dimensionConfigMap = new Map<string, typeof activeDimensions[0]>();
+  activeDimensions.forEach((dim: { id: string }) => {
+    dimensionConfigMap.set(dim.id, dim);
+  });
 
-  // Add book-level additional dimensions (supports both numeric IDs and name strings)
-  if (bookRules?.additionalAuditDimensions) {
-    // Build reverse lookup: name → id
-    const nameToId = new Map<string, number>();
-    for (const [id, labels] of Object.entries(DIMENSION_LABELS)) {
-      nameToId.set(labels.zh, Number(id));
-      nameToId.set(labels.en, Number(id));
+  // 构建维度ID到数字ID的映射
+  const idMap: Record<string, number> = {
+    "ooc": 1,
+    "timeline": 2,
+    "settingConflict": 3,
+    "powerScaling": 4,
+    "numericalCheck": 5,
+    "foreshadowing": 6,
+    "pacing": 7,
+    "writingStyle": 8,
+    "infoLeak": 9,
+    "vocabularyFatigue": 10,
+    "plotContinuity": 11,
+    "historicalAccuracy": 12,
+    "sideCharacterDumbing": 13,
+    "sideCharacterToolization": 14,
+    "satisfaction": 15,
+    "dialogueAuthenticity": 16,
+    "流水账": 17,
+    "knowledgeContamination": 18,
+    "perspectiveConsistency": 19,
+    "paragraphLength": 20,
+    "clicheDensity": 21,
+    "formulaicTwists": 22,
+    "listStructure": 23,
+    "subplotStagnation": 24,
+    "emotionalFlatness": 25,
+    "pacingMonotony": 26,
+    "sensitiveContent": 27,
+    "mainPlotConflict": 28,
+    "futureInfoLeak": 29,
+    "worldRuleConsistency": 30,
+    "sideStoryForeshadowing": 31,
+    "readerExpectation": 32,
+    "outlineDeviation": 33,
+  };
+
+  const activeIds = new Set<number>();
+  
+  // 添加配置中启用的维度
+  activeDimensions.forEach((dim: { id: string }) => {
+    const numericId = idMap[dim.id];
+    if (numericId) {
+      activeIds.add(numericId);
     }
+  });
 
-    for (const d of bookRules.additionalAuditDimensions) {
-      if (typeof d === "number") {
-        activeIds.add(d);
-      } else if (typeof d === "string") {
-        // Try exact match first, then substring match
-        const exactId = nameToId.get(d);
-        if (exactId !== undefined) {
-          activeIds.add(exactId);
-        } else {
-          // Fuzzy: find dimension whose name contains the string
-          for (const [name, id] of nameToId) {
-            if (name.includes(d) || d.includes(name)) {
-              activeIds.add(id);
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Always-active dimensions
+  // Always-active dimensions (确保这些维度始终启用)
   activeIds.add(32); // 读者期待管理 — universal
   activeIds.add(33); // 大纲偏离检测 — universal
 
   // Conditional overrides
   if (gp.eraResearch || bookRules?.eraConstraints?.enabled) {
-    activeIds.add(12);
+    activeIds.add(12); // 年代考据
   }
 
   // Spinoff dimensions — activated when parent_canon.md exists (but NOT in fanfic mode)
@@ -373,7 +403,7 @@ export class ContinuityAuditor extends BaseAgent {
     const resolvedLanguage = bookLanguage ?? gp.language;
     const isEnglish = resolvedLanguage === "en";
     const fanficMode = hasFanficCanon ? (bookRules?.fanficMode as FanficMode | undefined) : undefined;
-    const dimensions = buildDimensionList(gp, bookRules, resolvedLanguage, hasParentCanon, fanficMode);
+    const dimensions = buildDimensionList(bookDir, gp, bookRules, resolvedLanguage, hasParentCanon, fanficMode);
     const dimList = dimensions
       .map((d) => `${d.id}. ${d.name}${d.note ? (isEnglish ? ` (${d.note})` : `（${d.note}）`) : ""}`)
       .join("\n");
