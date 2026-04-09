@@ -20,7 +20,7 @@ import { useSSE } from "./hooks/use-sse";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
 import { postApi, useApi } from "./hooks/use-api";
-import { Sun, Moon, Bell, MessageSquare } from "lucide-react";
+import { Sun, Moon, Bell, MessageSquare, HelpCircle, Zap, ShieldCheck, RefreshCw } from "lucide-react";
 
 export type Route =
   | { page: "dashboard" }
@@ -53,6 +53,9 @@ export function App() {
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
   const [ready, setReady] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showAllNotifications, setShowAllNotifications] = useState(false);
 
   const isDark = theme === "dark";
 
@@ -131,6 +134,14 @@ export function App() {
           <div className="flex items-center gap-3">
 
             <button
+              onClick={() => setShowHelp(true)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
+              title={t("dash.help")}
+            >
+              <HelpCircle size={16} />
+            </button>
+
+            <button
               onClick={() => setTheme(isDark ? "light" : "dark")}
               className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
               title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
@@ -138,10 +149,51 @@ export function App() {
               {isDark ? <Sun size={16} /> : <Moon size={16} />}
             </button>
 
-            <button className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-all relative">
-              <Bell size={16} />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full border-2 border-background" />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications((prev) => !prev)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-all relative"
+                title="Notifications"
+              >
+                <Bell size={16} />
+                <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full border-2 border-background" />
+              </button>
+              {showNotifications && (
+                <div className="absolute right-0 top-full mt-1 w-80 bg-card border border-border rounded-xl shadow-lg shadow-primary/5 py-2 z-50 fade-in">
+                  <div className="px-4 py-2 border-b border-border/50">
+                    <h3 className="text-sm font-semibold">{t("dash.notifications")}</h3>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto">
+                    <div className="px-4 py-3 border-b border-border/50 hover:bg-secondary/50 transition-colors">
+                      <div className="text-sm font-medium">{t("dash.notificationTitle1")}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationMessage1")}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationTime1")}</div>
+                    </div>
+                    <div className="px-4 py-3 border-b border-border/50 hover:bg-secondary/50 transition-colors">
+                      <div className="text-sm font-medium">{t("dash.notificationTitle2")}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationMessage2")}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationTime2")}</div>
+                    </div>
+                    <div className="px-4 py-3 hover:bg-secondary/50 transition-colors">
+                      <div className="text-sm font-medium">{t("dash.notificationTitle3")}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationMessage3")}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationTime3")}</div>
+                    </div>
+                  </div>
+                  <div className="px-4 py-2 border-t border-border/50">
+                    <button 
+                      onClick={() => {
+                        setShowNotifications(false);
+                        setShowAllNotifications(true);
+                      }}
+                      className="w-full text-sm text-primary hover:underline"
+                    >
+                      {t("dash.viewAllNotifications")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Chat Panel Toggle */}
             <button
@@ -187,6 +239,217 @@ export function App() {
         sse={sse}
         activeBookId={activeBookId}
       />
+
+      {/* Help Modal */}
+      {showHelp && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="p-6 border-b border-border/50">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <HelpCircle size={20} className="text-primary" />
+                  {t("dash.helpTitle")}
+                </h2>
+                <button
+                  onClick={() => setShowHelp(false)}
+                  className="p-2 rounded-lg hover:bg-secondary/50 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-6">
+              <section>
+                <h3 className="text-lg font-semibold mb-3">{t("dash.helpBookStatus")}</h3>
+                <ul className="space-y-2 text-sm text-muted-foreground">
+                  <li className="flex items-start gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 mt-2 flex-shrink-0" />
+                    <span><strong>{t("book.statusActive")}</strong> - {t("dash.helpStatusActive")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 mt-2 flex-shrink-0" />
+                    <span><strong>{t("book.statusPaused")}</strong> - {t("dash.helpStatusPaused")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground mt-2 flex-shrink-0" />
+                    <span><strong>{t("book.statusOutlining")}</strong> - {t("dash.helpStatusOutlining")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground mt-2 flex-shrink-0" />
+                    <span><strong>{t("book.statusCompleted")}</strong> - {t("dash.helpStatusCompleted")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground mt-2 flex-shrink-0" />
+                    <span><strong>{t("book.statusDropped")}</strong> - {t("dash.helpStatusDropped")}</span>
+                  </li>
+                </ul>
+              </section>
+
+              <section>
+                <h3 className="text-lg font-semibold mb-3">{t("dash.helpChapterActions")}</h3>
+                <ul className="space-y-2 text-sm text-muted-foreground">
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">✓</span>
+                    <span><strong>{t("book.approve")}</strong> - {t("dash.helpApprove")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-destructive/10 flex items-center justify-center text-destructive flex-shrink-0">✗</span>
+                    <span><strong>{t("book.reject")}</strong> - {t("dash.helpReject")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-muted-foreground flex-shrink-0">🔍</span>
+                    <span><strong>{t("book.audit")}</strong> - {t("dash.helpAudit")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-muted-foreground flex-shrink-0">🔄</span>
+                    <span><strong>{t("book.rewrite")}</strong> - {t("dash.helpRewrite")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-muted-foreground flex-shrink-0">📝</span>
+                    <span><strong>{t("book.sync")}</strong> - {t("dash.helpSync")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-destructive/10 flex items-center justify-center text-destructive flex-shrink-0">🗑️</span>
+                    <span><strong>{t("book.delete")}</strong> - {t("dash.helpDelete")}</span>
+                  </li>
+                </ul>
+              </section>
+
+              <section>
+                <h3 className="text-lg font-semibold mb-3">{t("dash.helpReviseModes")}</h3>
+                <ul className="space-y-4 text-sm text-muted-foreground">
+                  <li className="p-3 border border-border/50 rounded-lg bg-secondary/20">
+                    <strong className="block mb-1">{t("book.spotFix")}</strong>
+                    <p>{t("dash.helpSpotFix")}</p>
+                  </li>
+                  <li className="p-3 border border-border/50 rounded-lg bg-secondary/20">
+                    <strong className="block mb-1">{t("book.polish")}</strong>
+                    <p>{t("dash.helpPolish")}</p>
+                  </li>
+                  <li className="p-3 border border-border/50 rounded-lg bg-secondary/20">
+                    <strong className="block mb-1">{t("book.rewrite")}</strong>
+                    <p>{t("dash.helpRewriteMode")}</p>
+                  </li>
+                  <li className="p-3 border border-border/50 rounded-lg bg-secondary/20">
+                    <strong className="block mb-1">{t("book.rework")}</strong>
+                    <p>{t("dash.helpRework")}</p>
+                  </li>
+                  <li className="p-3 border border-border/50 rounded-lg bg-secondary/20">
+                    <strong className="block mb-1">{t("book.antiDetect")}</strong>
+                    <p>{t("dash.helpAntiDetect")}</p>
+                  </li>
+                </ul>
+              </section>
+
+              <section>
+                <h3 className="text-lg font-semibold mb-3">{t("dash.helpBookActions")}</h3>
+                <ul className="space-y-2 text-sm text-muted-foreground">
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">⚡</span>
+                    <span><strong>{t("dash.writeNext")}</strong> - {t("dash.helpWriteNext")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-muted-foreground flex-shrink-0">📊</span>
+                    <span><strong>{t("dash.stats")}</strong> - {t("dash.helpStats")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-muted-foreground flex-shrink-0">⚙️</span>
+                    <span><strong>{t("book.settings")}</strong> - {t("dash.helpSettings")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-muted-foreground flex-shrink-0">📥</span>
+                    <span><strong>{t("book.export")}</strong> - {t("dash.helpExport")}</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-6 h-6 rounded-full bg-destructive/10 flex items-center justify-center text-destructive flex-shrink-0">🗑️</span>
+                    <span><strong>{t("book.deleteBook")}</strong> - {t("dash.helpDeleteBook")}</span>
+                  </li>
+                </ul>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* All Notifications Modal */}
+      {showAllNotifications && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="p-6 border-b border-border/50">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <Bell size={20} className="text-primary" />
+                  {t("dash.notifications")}
+                </h2>
+                <button
+                  onClick={() => setShowAllNotifications(false)}
+                  className="p-2 rounded-lg hover:bg-secondary/50 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="p-4 border border-border/50 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Zap size={16} className="text-primary" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium">{t("dash.notificationTitle1")}</h3>
+                      <span className="text-xs text-muted-foreground">{t("dash.notificationTime1")}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">{t("dash.notificationMessage1")}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="p-4 border border-border/50 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                    <ShieldCheck size={16} className="text-emerald-500" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium">{t("dash.notificationTitle2")}</h3>
+                      <span className="text-xs text-muted-foreground">{t("dash.notificationTime2")}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">{t("dash.notificationMessage2")}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="p-4 border border-border/50 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                    <RefreshCw size={16} className="text-blue-500" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium">{t("dash.notificationTitle3")}</h3>
+                      <span className="text-xs text-muted-foreground">{t("dash.notificationTime3")}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">{t("dash.notificationMessage3")}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-border/50">
+              <button
+                onClick={() => setShowAllNotifications(false)}
+                className="w-full py-2.5 px-4 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
+              >
+                {t("common.close")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

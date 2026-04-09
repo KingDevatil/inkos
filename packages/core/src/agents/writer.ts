@@ -654,10 +654,13 @@ export class WriterAgent extends BaseAgent {
     const heading = language === "en"
       ? `# Chapter ${output.chapterNumber}: ${output.title}`
       : `# 第${output.chapterNumber}章 ${output.title}`;
+    // Remove <think> tags and their content
+    const contentWithoutThink = output.content.replace(/<think>[\s\S]*?<\/think>/g, "");
+    
     const chapterContent = [
       heading,
       "",
-      output.content,
+      contentWithoutThink,
     ].join("\n");
     const runtimeStateArtifacts = await this.resolveRuntimeStateArtifactsForOutput(
       bookDir,

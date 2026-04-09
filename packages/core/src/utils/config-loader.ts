@@ -112,17 +112,21 @@ export async function loadProjectConfig(
     );
   }
   if (options?.requireApiKey === false) {
-    llm.provider = typeof llm.provider === "string" && llm.provider.length > 0
+    // Use env values if available, otherwise use config values
+    llm.provider = process.env.INKOS_LLM_PROVIDER || (typeof llm.provider === "string" && llm.provider.length > 0
       ? llm.provider
-      : "openai";
-    llm.baseUrl = typeof llm.baseUrl === "string" && llm.baseUrl.length > 0
+      : "openai");
+    llm.baseUrl = process.env.INKOS_LLM_BASE_URL || (typeof llm.baseUrl === "string" && llm.baseUrl.length > 0
       ? llm.baseUrl
-      : "https://example.invalid/v1";
-    llm.model = typeof llm.model === "string" && llm.model.length > 0
+      : "https://api.openai.com/v1");
+    llm.model = process.env.INKOS_LLM_MODEL || (typeof llm.model === "string" && llm.model.length > 0
       ? llm.model
-      : "noop-model";
+      : "gpt-3.5-turbo");
+    // Use env API key if available
+    llm.apiKey = process.env.INKOS_LLM_API_KEY ?? "";
+  } else {
+    llm.apiKey = apiKey ?? "";
   }
-  llm.apiKey = apiKey ?? "";
 
   return ProjectConfigSchema.parse(config);
 }

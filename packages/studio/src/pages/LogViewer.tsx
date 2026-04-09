@@ -47,7 +47,7 @@ export function LogViewer({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunct
         <div className="p-4 max-h-[600px] overflow-y-auto">
           {data?.entries && data.entries.length > 0 ? (
             <div className="space-y-1 font-mono text-sm leading-relaxed">
-              {data.entries.map((entry, i) => (
+              {[...data.entries].reverse().map((entry, i) => (
                 <div key={i} className="flex gap-2">
                   {entry.timestamp && (
                     <span className="text-muted-foreground shrink-0 w-20 tabular-nums">

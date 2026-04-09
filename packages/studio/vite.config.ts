@@ -14,7 +14,7 @@ export default defineConfig({
     port: 4567,
     proxy: {
       "/api": {
-        target: `http://localhost:${process.env.INKOS_STUDIO_PORT ?? "4569"}`,
+        target: "http://localhost:4567",
         changeOrigin: true,
       },
     },

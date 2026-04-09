@@ -44,6 +44,23 @@ export function resolveBrowserLaunch(
 }
 
 export async function resolveStudioLaunch(root: string): Promise<StudioLaunchSpec | null> {
+  // First try to use built JavaScript entry (most reliable)
+  const builtEntry = await firstAccessiblePath([
+    join(root, "packages", "studio", "dist", "api", "index.js"),
+    join(root, "node_modules", "@actalk", "inkos-studio", "dist", "api", "index.js"),
+    join(root, "node_modules", "@actalk", "inkos-studio", "server.cjs"),
+    join(cliPackageRoot, "node_modules", "@actalk", "inkos-studio", "dist", "api", "index.js"),
+    join(cliPackageRoot, "node_modules", "@actalk", "inkos-studio", "server.cjs"),
+  ]);
+  if (builtEntry) {
+    return {
+      studioEntry: builtEntry,
+      command: "node",
+      args: [builtEntry, root],
+    };
+  }
+
+  // Fall back to TypeScript sources
   const sourceEntry = await firstAccessiblePath([
     join(root, "packages", "studio", "src", "api", "index.ts"),
     join(root, "..", "packages", "studio", "src", "api", "index.ts"),
@@ -51,18 +68,11 @@ export async function resolveStudioLaunch(root: string): Promise<StudioLaunchSpe
   ]);
   if (sourceEntry) {
     const studioPackageRoot = dirname(dirname(dirname(sourceEntry)));
-    const localTsxLoader = await firstAccessiblePath([
-      join(studioPackageRoot, "node_modules", "tsx", "dist", "loader.mjs"),
-    ]);
-    if (localTsxLoader) {
-      return {
-        studioEntry: sourceEntry,
-        command: "node",
-        args: ["--import", localTsxLoader, sourceEntry, root],
-      };
-    }
-
+    
+    // Try to use local tsx binary (Windows-compatible)
     const localTsx = await firstAccessiblePath([
+      join(studioPackageRoot, "node_modules", ".bin", "tsx.CMD"),
+      join(studioPackageRoot, "node_modules", ".bin", "tsx.ps1"),
       join(studioPackageRoot, "node_modules", ".bin", "tsx"),
     ]);
     if (localTsx) {
@@ -72,27 +82,6 @@ export async function resolveStudioLaunch(root: string): Promise<StudioLaunchSpe
         args: [sourceEntry, root],
       };
     }
-    return {
-      studioEntry: sourceEntry,
-      command: "npx",
-      args: ["tsx", sourceEntry, root],
-    };
-  }
-
-  const builtEntry = await firstAccessiblePath([
-    join(root, "node_modules", "@actalk", "inkos-studio", "dist", "api", "index.js"),
-    join(root, "node_modules", "@actalk", "inkos-studio", "server.cjs"),
-    join(cliPackageRoot, "node_modules", "@actalk", "inkos-studio", "dist", "api", "index.js"),
-    join(cliPackageRoot, "node_modules", "@actalk", "inkos-studio", "server.cjs"),
-    join(cliPackageRoot, "..", "inkos-studio", "dist", "api", "index.js"),
-    join(cliPackageRoot, "..", "inkos-studio", "server.cjs"),
-  ]);
-  if (builtEntry) {
-    return {
-      studioEntry: builtEntry,
-      command: "node",
-      args: [builtEntry, root],
-    };
   }
 
   return null;

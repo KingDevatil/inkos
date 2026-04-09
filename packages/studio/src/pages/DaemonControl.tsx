@@ -23,7 +23,8 @@ export function DaemonControl({ nav, theme, t, sse }: { nav: Nav; theme: Theme; 
 
   const daemonEvents = sse.messages
     .filter((m) => m.event.startsWith("daemon:") || m.event === "log")
-    .slice(-20);
+    .slice(-20)
+    .reverse();
 
   const handleStart = async () => {
     setLoading(true);

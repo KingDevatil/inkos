@@ -67,15 +67,15 @@ function BookMenu({ bookId, bookTitle, nav, t, onDelete }: {
   };
 
   return (
-    <div ref={menuRef} className="relative">
+    <div ref={menuRef} className="relative z-50">
       <button
         onClick={() => setOpen((prev) => !prev)}
-        className="p-3 rounded-xl text-muted-foreground hover:text-primary hover:bg-primary/10 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+        className="p-3 rounded-xl text-muted-foreground hover:text-primary hover:bg-primary/10 hover:scale-105 active:scale-95 transition-all cursor-pointer relative z-10"
       >
         <MoreVertical size={18} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-xl shadow-lg shadow-primary/5 py-1 z-50 fade-in">
+        <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-xl shadow-lg shadow-primary/5 py-1 z-50 fade-in transform-gpu overflow-visible">
           <button
             onClick={() => { setOpen(false); nav.toBook(bookId); }}
             className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-secondary/50 transition-colors cursor-pointer"
@@ -191,7 +191,7 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
           return (
             <div
               key={book.id}
-              className={`paper-sheet group relative rounded-2xl overflow-hidden fade-in ${staggerClass}`}
+              className={`paper-sheet group relative rounded-2xl fade-in ${staggerClass}`}
             >
               <div className="p-8 flex items-start justify-between">
                 <div className="flex-1 min-w-0">

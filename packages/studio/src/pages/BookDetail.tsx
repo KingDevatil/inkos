@@ -1,5 +1,5 @@
 import { fetchJson, useApi, postApi } from "../hooks/use-api";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
@@ -24,7 +24,8 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
-  Save
+  Save,
+  ChevronDown
 } from "lucide-react";
 
 interface ChapterMeta {
@@ -101,6 +102,9 @@ export function BookDetail({
   const [rewritingChapters, setRewritingChapters] = useState<ReadonlyArray<number>>([]);
   const [revisingChapters, setRevisingChapters] = useState<ReadonlyArray<number>>([]);
   const [syncingChapters, setSyncingChapters] = useState<ReadonlyArray<number>>([]);
+  const [deletingChapters, setDeletingChapters] = useState<ReadonlyArray<number>>([]);
+  const [openDropdown, setOpenDropdown] = useState<number | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsWordCount, setSettingsWordCount] = useState<number | null>(null);
   const [settingsTargetChapters, setSettingsTargetChapters] = useState<number | null>(null);
@@ -111,6 +115,18 @@ export function BookDetail({
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
   const latestPersistedChapter = data ? data.nextChapter - 1 : 0;
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpenDropdown(null);
+      }
+    };
+    if (openDropdown !== null) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [openDropdown]);
 
   useEffect(() => {
     const recent = sse.messages.at(-1);
@@ -239,6 +255,38 @@ export function BookDetail({
       alert(e instanceof Error ? e.message : "Sync failed");
     } finally {
       setSyncingChapters((prev) => prev.filter((n) => n !== chapterNum));
+    }
+  };
+
+  const handleDeleteChapter = async (chapterNum: number) => {
+    if (!window.confirm(data?.book.language === "en" ? `Are you sure you want to delete chapter ${chapterNum}?` : `确定要删除第 ${chapterNum} 章吗？`)) {
+      return;
+    }
+    setDeletingChapters((prev) => [...prev, chapterNum]);
+    try {
+      await fetchJson(`/books/${bookId}/chapters/${chapterNum}`, {
+        method: "DELETE",
+      });
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingChapters((prev) => prev.filter((n) => n !== chapterNum));
+    }
+  };
+
+  const handleFixChapterOrder = async () => {
+    if (!window.confirm(data?.book.language === "en" ? "Are you sure you want to fix chapter order? This will renumber all chapters sequentially." : "确定要修复章节顺序吗？这将按顺序重新编号所有章节。")) {
+      return;
+    }
+    try {
+      const result = await fetchJson(`/books/${bookId}/chapters/fix-order`, {
+        method: "POST",
+      });
+      alert(data?.book.language === "en" ? `Chapter order fixed. ${result.chapterCount} chapters renumbered.` : `章节顺序已修复。${result.chapterCount} 个章节已重新编号。`);
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Fix order failed");
     }
   };
 
@@ -407,6 +455,13 @@ export function BookDetail({
           >
             <BarChart2 size={14} />
             {t("book.analytics")}
+          </button>
+          <button
+            onClick={handleFixChapterOrder}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+          >
+            <RefreshCw size={14} />
+            {t("book.fixOrder")}
           </button>
           <div className="flex items-center gap-2">
             <select
@@ -580,23 +635,65 @@ export function BookDetail({
                           ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
                           : <RefreshCw size={14} />}
                       </button>
-                      <select
-                        disabled={revisingChapters.includes(ch.number)}
-                        value=""
-                        onChange={(e) => {
-                          const mode = e.target.value as ReviseMode;
-                          if (mode) handleRevise(ch.number, mode);
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleDeleteChapter(ch.number);
                         }}
-                        className="px-2 py-1.5 text-[11px] font-bold rounded-lg bg-secondary text-muted-foreground border border-border/50 outline-none hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 cursor-pointer"
-                        title="Revise with AI"
+                        disabled={deletingChapters.includes(ch.number)}
+                        className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all shadow-sm disabled:opacity-50"
+                        title={t("book.delete")}
                       >
-                        <option value="" disabled>{revisingChapters.includes(ch.number) ? t("common.loading") : t("book.curate")}</option>
-                        <option value="spot-fix">{t("book.spotFix")}</option>
-                        <option value="polish">{t("book.polish")}</option>
-                        <option value="rewrite">{t("book.rewrite")}</option>
-                        <option value="rework">{t("book.rework")}</option>
-                        <option value="anti-detect">{t("book.antiDetect")}</option>
-                      </select>
+                        {deletingChapters.includes(ch.number)
+                          ? <div className="w-3.5 h-3.5 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" />
+                          : <Trash2 size={14} />}
+                      </button>
+                      <div ref={openDropdown === ch.number ? dropdownRef : undefined} className="relative">
+                        <button
+                          disabled={revisingChapters.includes(ch.number)}
+                          onClick={() => setOpenDropdown(openDropdown === ch.number ? null : ch.number)}
+                          className="px-2 py-1.5 text-[11px] font-bold rounded-lg bg-card text-foreground border border-border/50 outline-none hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
+                          title="Revise with AI"
+                        >
+                          {revisingChapters.includes(ch.number) ? t("common.loading") : t("book.curate")}
+                          <ChevronDown size={10} />
+                        </button>
+                        {openDropdown === ch.number && (
+                          <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-lg z-50 min-w-[120px] overflow-hidden">
+                            <button
+                              onClick={() => { handleRevise(ch.number, "spot-fix"); setOpenDropdown(null); }}
+                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
+                            >
+                              {t("book.spotFix")}
+                            </button>
+                            <button
+                              onClick={() => { handleRevise(ch.number, "polish"); setOpenDropdown(null); }}
+                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
+                            >
+                              {t("book.polish")}
+                            </button>
+                            <button
+                              onClick={() => { handleRevise(ch.number, "rewrite"); setOpenDropdown(null); }}
+                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
+                            >
+                              {t("book.rewrite")}
+                            </button>
+                            <button
+                              onClick={() => { handleRevise(ch.number, "rework"); setOpenDropdown(null); }}
+                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
+                            >
+                              {t("book.rework")}
+                            </button>
+                            <button
+                              onClick={() => { handleRevise(ch.number, "anti-detect"); setOpenDropdown(null); }}
+                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
+                            >
+                              {t("book.antiDetect")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>

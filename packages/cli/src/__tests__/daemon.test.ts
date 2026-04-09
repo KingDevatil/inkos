@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 
 const readFileMock = vi.fn();
 const writeFileMock = vi.fn();
@@ -83,8 +84,9 @@ describe("daemon command", () => {
       upCommand.parseAsync(["node", "up", "--quiet"]),
     ).rejects.toMatchObject({ code: 1 });
 
-    expect(writeFileMock).toHaveBeenCalledWith("/project/inkos.pid", expect.any(String), "utf-8");
-    expect(unlinkMock).toHaveBeenCalledWith("/project/inkos.pid");
+    const expectedPidPath = join("/project", "inkos.pid");
+    expect(writeFileMock).toHaveBeenCalledWith(expectedPidPath, expect.any(String), "utf-8");
+    expect(unlinkMock).toHaveBeenCalledWith(expectedPidPath);
 
     exitSpy.mockRestore();
   });

@@ -785,6 +785,17 @@ export class PipelineRunner {
     });
     const result = evaluation.auditResult;
 
+    // Log audit results
+    if (result.issues.length > 0) {
+      this.config.logger?.info(`审计发现 ${result.issues.length} 个问题:`);
+      result.issues.forEach((issue, index) => {
+        this.config.logger?.info(`  ${index + 1}. [${issue.severity}] ${issue.description}`);
+      });
+    } else {
+      this.config.logger?.info(`审计通过，未发现问题`);
+    }
+    this.config.logger?.info(`审计摘要: ${result.summary}`);
+
     // Update index with audit result
     const index = await this.state.loadChapterIndex(bookId);
     const updated = index.map((ch) =>

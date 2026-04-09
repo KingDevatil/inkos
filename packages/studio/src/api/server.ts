@@ -7,14 +7,17 @@ import {
   PipelineRunner,
   createLLMClient,
   createLogger,
+  createJsonLineSink,
   computeAnalytics,
   loadProjectConfig,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
   type LogEntry,
+  type ChapterMeta,
 } from "@actalk/inkos-core";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir, unlink, rename } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
 import { join } from "node:path";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
@@ -87,7 +90,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     overrides?: Partial<Pick<PipelineConfig, "externalContext">>,
   ): Promise<PipelineConfig> {
     const currentConfig = await loadCurrentProjectConfig();
-    const logger = createLogger({ tag: "studio", sinks: [sseSink] });
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const logger = createLogger({ 
+      tag: "studio", 
+      sinks: [sseSink, createJsonLineSink(logStream)] 
+    });
     return {
       client: createLLMClient(currentConfig.llm),
       model: currentConfig.llm.model,
@@ -589,27 +597,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   app.post("/api/books/:id/audit/:chapter", async (c) => {
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
-    const bookDir = state.bookDir(id);
 
     broadcast("audit:start", { bookId: id, chapter: chapterNum });
     try {
-      const book = await state.loadBookConfig(id);
-      const chaptersDir = join(bookDir, "chapters");
-      const files = await readdir(chaptersDir);
-      const paddedNum = String(chapterNum).padStart(4, "0");
-      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-      if (!match) return c.json({ error: "Chapter not found" }, 404);
-
-      const content = await readFile(join(chaptersDir, match), "utf-8");
-      const currentConfig = await loadCurrentProjectConfig();
-      const { ContinuityAuditor } = await import("@actalk/inkos-core");
-      const auditor = new ContinuityAuditor({
-        client: createLLMClient(currentConfig.llm),
-        model: currentConfig.llm.model,
-        projectRoot: root,
-        bookId: id,
-      });
-      const result = await auditor.auditChapter(bookDir, content, chapterNum, book.genre);
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const result = await pipeline.auditDraft(id, chapterNum);
       broadcast("audit:complete", { bookId: id, chapter: chapterNum, passed: result.passed });
       return c.json(result);
     } catch (e) {
@@ -926,16 +918,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     broadcast("rewrite:start", { bookId: id, chapter: chapterNum });
     try {
-      const rollbackTarget = chapterNum - 1;
-      const discarded = await state.rollbackToChapter(id, rollbackTarget);
       const pipeline = new PipelineRunner(await buildPipelineConfig({
         externalContext: body.brief,
       }));
-      pipeline.writeNextChapter(id).then(
-        (result) => broadcast("rewrite:complete", { bookId: id, chapterNumber: result.chapterNumber, title: result.title, wordCount: result.wordCount }),
+      pipeline.reviseDraft(id, chapterNum, "rewrite").then(
+        (result) => broadcast("rewrite:complete", { bookId: id, chapterNumber: result.chapterNumber, wordCount: result.wordCount }),
         (e) => broadcast("rewrite:error", { bookId: id, error: e instanceof Error ? e.message : String(e) }),
       );
-      return c.json({ status: "rewriting", bookId: id, chapter: chapterNum, rolledBackTo: rollbackTarget, discarded });
+      return c.json({ status: "rewriting", bookId: id, chapter: chapterNum });
     } catch (e) {
       broadcast("rewrite:error", { bookId: id, error: String(e) });
       return c.json({ error: String(e) }, 500);
@@ -955,6 +945,180 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       }));
       const result = await pipeline.resyncChapterArtifacts(id, chapterNum);
       return c.json(result);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Delete Chapter ---  
+
+  app.delete("/api/books/:id/chapters/:chapter", async (c) => {
+    const id = c.req.param("id");
+    const chapterNum = parseInt(c.req.param("chapter"), 10);
+
+    try {
+      const bookDir = state.bookDir(id);
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const paddedNum = String(chapterNum).padStart(4, "0");
+      const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+
+      if (!chapterFile) {
+        return c.json({ error: `Chapter ${chapterNum} not found` }, 404);
+      }
+
+      // Delete chapter file
+      await unlink(join(chaptersDir, chapterFile));
+
+      // Update chapter index
+      const index = await state.loadChapterIndex(id);
+      const updatedIndex = index.filter((ch) => ch.number !== chapterNum);
+      await state.saveChapterIndex(id, updatedIndex);
+
+      return c.json({ status: "deleted", bookId: id, chapter: chapterNum });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Update Chapter Order ---  
+
+  app.put("/api/books/:id/chapters/order", async (c) => {
+    const id = c.req.param("id");
+    const body: { chapters: Array<{ number: number; newNumber: number }> } = await c.req
+      .json<{ chapters: Array<{ number: number; newNumber: number }> }>()
+      .catch(() => ({ chapters: [] }));
+
+    try {
+      const bookDir = state.bookDir(id);
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const index = await state.loadChapterIndex(id);
+
+      // Update chapter files and index
+      const updatedIndex = [...index];
+      
+      // Process chapters in reverse order to avoid conflicts
+      for (const { number, newNumber } of body.chapters.sort((a, b) => b.number - a.number)) {
+        // Find chapter in index
+        const chapterIndex = updatedIndex.findIndex((ch) => ch.number === number);
+        if (chapterIndex === -1) continue;
+
+        // Find chapter file
+        const oldPaddedNum = String(number).padStart(4, "0");
+        const chapterFile = files.find((f) => f.startsWith(oldPaddedNum) && f.endsWith(".md"));
+        if (!chapterFile) continue;
+
+        // Rename chapter file
+        const newPaddedNum = String(newNumber).padStart(4, "0");
+        const newFileName = chapterFile.replace(oldPaddedNum, newPaddedNum);
+        await rename(join(chaptersDir, chapterFile), join(chaptersDir, newFileName));
+
+        // Update chapter number in index
+        updatedIndex[chapterIndex] = {
+          ...updatedIndex[chapterIndex],
+          number: newNumber,
+        };
+      }
+
+      // Sort index by chapter number
+      updatedIndex.sort((a, b) => a.number - b.number);
+
+      // Save updated index
+      await state.saveChapterIndex(id, updatedIndex);
+
+      return c.json({ status: "updated", bookId: id, chapters: body.chapters });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Fix Chapter Order ---  
+
+  app.post("/api/books/:id/chapters/fix-order", async (c) => {
+    const id = c.req.param("id");
+
+    try {
+      const bookDir = state.bookDir(id);
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      
+      // Filter and sort chapter files
+      const chapterFiles = files
+        .filter((f) => f.match(/^\d{4}.*\.md$/))
+        .sort();
+
+      // Load existing chapter index to preserve metadata
+      let existingIndex: ReadonlyArray<ChapterMeta> = [];
+      try {
+        existingIndex = await state.loadChapterIndex(id);
+      } catch {
+        // If index doesn't exist, continue with empty array
+      }
+
+      // Update chapter files and build new index
+      const newIndex = [];
+      for (let i = 0; i < chapterFiles.length; i++) {
+        const newNumber = i + 1;
+        const newPaddedNum = String(newNumber).padStart(4, "0");
+        const oldFileName = chapterFiles[i];
+        const newFileName = oldFileName.replace(/^\d{4}/, newPaddedNum);
+        
+        // Rename file if needed
+        if (oldFileName !== newFileName) {
+          await rename(join(chaptersDir, oldFileName), join(chaptersDir, newFileName));
+        }
+
+        // Extract old chapter number from filename
+        const oldNumberMatch = oldFileName.match(/^(\d{4})/);
+        const oldNumber = oldNumberMatch ? parseInt(oldNumberMatch[1], 10) : null;
+
+        // Find existing chapter metadata
+        let existingChapter = existingIndex.find(ch => ch.number === oldNumber);
+        
+        // If not found by number, try to find by filename pattern
+        if (!existingChapter) {
+          existingChapter = existingIndex.find(ch => {
+            const oldPaddedNum = String(ch.number).padStart(4, "0");
+            return oldFileName.startsWith(oldPaddedNum);
+          });
+        }
+
+        // Determine chapter title
+        let title: string;
+        if (existingChapter?.title) {
+          title = existingChapter.title;
+        } else {
+          // Extract chapter title from filename
+          const titleMatch = newFileName.match(/^\d{4}-(.*)\.md$/);
+          title = titleMatch ? titleMatch[1].replace(/-/g, " ") : `Chapter ${newNumber}`;
+        }
+
+        // Determine chapter status
+        const status = existingChapter?.status || "drafted" as const;
+        const wordCount = existingChapter?.wordCount || 0;
+        const createdAt = existingChapter?.createdAt || new Date().toISOString();
+        const updatedAt = new Date().toISOString();
+        const auditIssues = existingChapter?.auditIssues || [];
+        const lengthWarnings = existingChapter?.lengthWarnings || [];
+
+        // Add to new index
+        newIndex.push({
+          number: newNumber,
+          title,
+          status,
+          wordCount,
+          createdAt,
+          updatedAt,
+          auditIssues,
+          lengthWarnings,
+        });
+      }
+
+      // Save new index
+      await state.saveChapterIndex(id, newIndex);
+
+      return c.json({ status: "fixed", bookId: id, chapterCount: newIndex.length });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
