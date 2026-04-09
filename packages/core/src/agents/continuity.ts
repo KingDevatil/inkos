@@ -9,7 +9,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
 import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
 import { join } from "node:path";
-const { loadAuditConfig } = require("../config/audit-config.js");
+import { loadAuditConfig } from "../config/audit-config.js";
 
 
 export interface AuditResult {
@@ -242,11 +242,11 @@ function buildDimensionList(
   const auditConfig = loadAuditConfig(bookDir);
   
   // 从配置中获取启用的维度
-  const activeDimensions = auditConfig.dimensions.filter((dim: { enabled: boolean }) => dim.enabled);
+  const activeDimensions = auditConfig.dimensions.filter((dim) => dim.enabled);
   
   // 构建维度ID到配置的映射
   const dimensionConfigMap = new Map<string, typeof activeDimensions[0]>();
-  activeDimensions.forEach((dim: { id: string }) => {
+  activeDimensions.forEach((dim) => {
     dimensionConfigMap.set(dim.id, dim);
   });
 
@@ -332,7 +332,16 @@ function buildDimensionList(
     const name = dimensionName(id, language);
     if (!name) continue;
 
-    const note = buildDimensionNote(id, language, gp, bookRules, fanficMode, fanficConfig);
+    let note = buildDimensionNote(id, language, gp, bookRules, fanficMode, fanficConfig);
+    
+    // 添加 weight 信息到 note
+    const dimConfig = dimensionConfigMap.get(Object.keys(idMap).find(key => idMap[key] === id) || "");
+    if (dimConfig && dimConfig.weight !== 1.0) {
+      const weightNote = language === "en" 
+        ? `[Weight: ${dimConfig.weight.toFixed(1)}] `
+        : `[权重: ${dimConfig.weight.toFixed(1)}] `;
+      note = weightNote + note;
+    }
 
     dims.push({ id, name, note });
   }
@@ -574,7 +583,58 @@ ${chapterContent}`;
       : await this.chat(chatMessages, chatOptions);
 
     const result = this.parseAuditResult(response.content, resolvedLanguage);
-    return { ...result, tokenUsage: response.usage };
+    
+    // 加载审计配置并应用评判标准
+    const auditConfig = loadAuditConfig(bookDir);
+    const evaluatedResult = this.evaluateAuditResult(result, auditConfig.passCriteria);
+    
+    return { ...evaluatedResult, tokenUsage: response.usage };
+  }
+
+  /**
+   * 根据评判标准评估审计结果
+   * @param result 原始审计结果
+   * @param criteria 评判标准
+   * @returns 评估后的审计结果
+   */
+  private evaluateAuditResult(
+    result: AuditResult,
+    criteria: import("../config/audit-config.js").AuditPassCriteria
+  ): AuditResult {
+    const issues = result.issues;
+    
+    // 统计各 severity 的问题数量
+    const criticalCount = issues.filter(i => i.severity === "critical").length;
+    const warningCount = issues.filter(i => i.severity === "warning").length;
+    const infoCount = issues.filter(i => i.severity === "info").length;
+    const totalCount = issues.length;
+    
+    // 计算加权分数
+    const { scoringRules, chapterAudit } = criteria;
+    const weightedScore = Math.max(0, 100 
+      - criticalCount * scoringRules.criticalIssueWeight
+      - warningCount * scoringRules.warningIssueWeight
+      - infoCount * scoringRules.infoIssueWeight
+    );
+    
+    // 判断是否通过
+    const passed = 
+      criticalCount <= chapterAudit.maxCriticalIssues &&
+      warningCount <= chapterAudit.maxWarningIssues &&
+      totalCount <= chapterAudit.maxTotalIssues &&
+      weightedScore >= scoringRules.minPassScore;
+    
+    // 更新 summary，添加评分信息
+    const scoreInfo = `加权评分: ${weightedScore.toFixed(1)}/100 (Critical: ${criticalCount}, Warning: ${warningCount}, Info: ${infoCount})`;
+    const summary = result.summary 
+      ? `${result.summary} | ${scoreInfo}`
+      : scoreInfo;
+    
+    return {
+      ...result,
+      passed,
+      summary,
+    };
   }
 
   private parseAuditResult(content: string, language: PromptLanguage): AuditResult {

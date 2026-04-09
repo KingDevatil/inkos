@@ -141,3 +141,17 @@ export { sendTelegram, type TelegramConfig } from "./notify/telegram.js";
 export { sendFeishu, type FeishuConfig } from "./notify/feishu.js";
 export { sendWechatWork, type WechatWorkConfig } from "./notify/wechat-work.js";
 export { sendWebhook, type WebhookConfig, type WebhookEvent, type WebhookPayload } from "./notify/webhook.js";
+
+// Audit Config
+export {
+  loadAuditConfig,
+  saveGlobalAuditConfig,
+  saveProjectAuditConfig,
+  getDefaultAuditConfig,
+  type AuditConfig,
+  type AuditDimension,
+  type ScoringConfig,
+  type ValidationRules,
+  type AuditPassCriteria,
+  type FoundationReviewConfig,
+} from "./config/audit-config.js";

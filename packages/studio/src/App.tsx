@@ -20,7 +20,7 @@ import { useSSE } from "./hooks/use-sse";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
 import { postApi, useApi } from "./hooks/use-api";
-import { Sun, Moon, Bell, MessageSquare, HelpCircle, Zap, ShieldCheck, RefreshCw } from "lucide-react";
+import { Sun, Moon, Bell, MessageSquare, HelpCircle } from "lucide-react";
 
 export type Route =
   | { page: "dashboard" }
@@ -55,7 +55,6 @@ export function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showAllNotifications, setShowAllNotifications] = useState(false);
 
   const isDark = theme === "dark";
 
@@ -156,7 +155,6 @@ export function App() {
                 title="Notifications"
               >
                 <Bell size={16} />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full border-2 border-background" />
               </button>
               {showNotifications && (
                 <div className="absolute right-0 top-full mt-1 w-80 bg-card border border-border rounded-xl shadow-lg shadow-primary/5 py-2 z-50 fade-in">
@@ -164,32 +162,9 @@ export function App() {
                     <h3 className="text-sm font-semibold">{t("dash.notifications")}</h3>
                   </div>
                   <div className="max-h-60 overflow-y-auto">
-                    <div className="px-4 py-3 border-b border-border/50 hover:bg-secondary/50 transition-colors">
-                      <div className="text-sm font-medium">{t("dash.notificationTitle1")}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationMessage1")}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationTime1")}</div>
+                    <div className="px-4 py-3 text-center text-sm text-muted-foreground">
+                      {t("dash.noNotifications")}
                     </div>
-                    <div className="px-4 py-3 border-b border-border/50 hover:bg-secondary/50 transition-colors">
-                      <div className="text-sm font-medium">{t("dash.notificationTitle2")}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationMessage2")}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationTime2")}</div>
-                    </div>
-                    <div className="px-4 py-3 hover:bg-secondary/50 transition-colors">
-                      <div className="text-sm font-medium">{t("dash.notificationTitle3")}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationMessage3")}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{t("dash.notificationTime3")}</div>
-                    </div>
-                  </div>
-                  <div className="px-4 py-2 border-t border-border/50">
-                    <button 
-                      onClick={() => {
-                        setShowNotifications(false);
-                        setShowAllNotifications(true);
-                      }}
-                      className="w-full text-sm text-primary hover:underline"
-                    >
-                      {t("dash.viewAllNotifications")}
-                    </button>
                   </div>
                 </div>
               )}
@@ -374,82 +349,7 @@ export function App() {
         </div>
       )}
 
-      {/* All Notifications Modal */}
-      {showAllNotifications && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-y-auto">
-            <div className="p-6 border-b border-border/50">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold flex items-center gap-2">
-                  <Bell size={20} className="text-primary" />
-                  {t("dash.notifications")}
-                </h2>
-                <button
-                  onClick={() => setShowAllNotifications(false)}
-                  className="p-2 rounded-lg hover:bg-secondary/50 transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M18 6 6 18" />
-                    <path d="m6 6 12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="p-4 border border-border/50 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <Zap size={16} className="text-primary" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-medium">{t("dash.notificationTitle1")}</h3>
-                      <span className="text-xs text-muted-foreground">{t("dash.notificationTime1")}</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">{t("dash.notificationMessage1")}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="p-4 border border-border/50 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                    <ShieldCheck size={16} className="text-emerald-500" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-medium">{t("dash.notificationTitle2")}</h3>
-                      <span className="text-xs text-muted-foreground">{t("dash.notificationTime2")}</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">{t("dash.notificationMessage2")}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="p-4 border border-border/50 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center flex-shrink-0">
-                    <RefreshCw size={16} className="text-blue-500" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-medium">{t("dash.notificationTitle3")}</h3>
-                      <span className="text-xs text-muted-foreground">{t("dash.notificationTime3")}</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">{t("dash.notificationMessage3")}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="p-6 border-t border-border/50">
-              <button
-                onClick={() => setShowAllNotifications(false)}
-                className="w-full py-2.5 px-4 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
-              >
-                {t("common.close")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

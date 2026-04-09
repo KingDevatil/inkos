@@ -3,6 +3,7 @@ import {
   StateManager,
   analyzeAITells,
   computeAnalytics,
+  loadAuditConfig,
 } from "@actalk/inkos-core";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -57,25 +58,10 @@ export const evalCommand = new Command("eval")
       const bookDir = state.bookDir(bookId);
       const chaptersDir = join(bookDir, "chapters");
       
-      // 默认审计配置
-      const defaultAuditConfig = {
-        scoring: {
-          penalties: {
-            auditIssue: 5,
-            aiTellDensity: 20,
-            paragraphWarning: 3
-          },
-          weights: {
-            auditPassRate: 0.3,
-            aiTellDensity: 0.25,
-            paragraphWarnings: 0.15,
-            hookResolveRate: 0.2,
-            duplicateTitles: 0.1
-          }
-        }
-      };
-      const penalties = defaultAuditConfig.scoring.penalties;
-      const weights = defaultAuditConfig.scoring.weights;
+      // 加载审计配置
+      const auditConfig = loadAuditConfig(bookDir);
+      const penalties = auditConfig.scoring.penalties;
+      const weights = auditConfig.scoring.weights;
 
       // Parse chapter range
       let startCh = 1;

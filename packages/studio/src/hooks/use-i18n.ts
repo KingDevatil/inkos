@@ -48,16 +48,7 @@ const strings = {
   "dash.helpExport": { zh: "导出书籍内容为TXT格式", en: "Export book content as TXT format" },
   "dash.helpDeleteBook": { zh: "删除书籍及其所有章节内容", en: "Delete book and all its chapters" },
   "dash.notifications": { zh: "通知", en: "Notifications" },
-  "dash.notificationTitle1": { zh: "章节已完成", en: "Chapter Completed" },
-  "dash.notificationMessage1": { zh: "第三章的内容已成功生成", en: "The content for Chapter 3 has been successfully generated" },
-  "dash.notificationTime1": { zh: "10分钟前", en: "10 minutes ago" },
-  "dash.notificationTitle2": { zh: "审计完成", en: "Audit Completed" },
-  "dash.notificationMessage2": { zh: "第一章的审计已完成，没有发现问题", en: "The audit for Chapter 1 has been completed with no issues" },
-  "dash.notificationTime2": { zh: "30分钟前", en: "30 minutes ago" },
-  "dash.notificationTitle3": { zh: "系统更新", en: "System Update" },
-  "dash.notificationMessage3": { zh: "InkOS Studio 已更新到最新版本", en: "InkOS Studio has been updated to the latest version" },
-  "dash.notificationTime3": { zh: "2小时前", en: "2 hours ago" },
-  "dash.viewAllNotifications": { zh: "查看所有通知", en: "View All Notifications" },
+  "dash.noNotifications": { zh: "暂无通知", en: "No notifications" },
 
   // Book Detail
   "book.writeNext": { zh: "写下一章", en: "Write Next" },

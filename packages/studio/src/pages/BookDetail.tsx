@@ -1141,6 +1141,246 @@ export function BookDetail({
                 </div>
               </div>
 
+              {/* Pass Criteria */}
+              <div>
+                <h3 className="text-sm font-bold mb-3">审计通过标准</h3>
+                
+                {/* Chapter Audit Criteria */}
+                <div className="mb-4">
+                  <h4 className="text-xs font-bold text-muted-foreground mb-2">章节审计</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">最多 Critical 问题</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.chapterAudit?.maxCriticalIssues ?? 0}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              chapterAudit: {
+                                ...auditConfig.passCriteria?.chapterAudit,
+                                maxCriticalIssues: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">最多 Warning 问题</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.chapterAudit?.maxWarningIssues ?? 5}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              chapterAudit: {
+                                ...auditConfig.passCriteria?.chapterAudit,
+                                maxWarningIssues: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">最多总问题数</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.chapterAudit?.maxTotalIssues ?? 10}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              chapterAudit: {
+                                ...auditConfig.passCriteria?.chapterAudit,
+                                maxTotalIssues: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Outline Audit Criteria */}
+                <div className="mb-4">
+                  <h4 className="text-xs font-bold text-muted-foreground mb-2">大纲审计</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">最多 Critical 问题</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.outlineAudit?.maxCriticalIssues ?? 0}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              outlineAudit: {
+                                ...auditConfig.passCriteria?.outlineAudit,
+                                maxCriticalIssues: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">最多 Warning 问题</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.outlineAudit?.maxWarningIssues ?? 3}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              outlineAudit: {
+                                ...auditConfig.passCriteria?.outlineAudit,
+                                maxWarningIssues: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">最多总问题数</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.outlineAudit?.maxTotalIssues ?? 5}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              outlineAudit: {
+                                ...auditConfig.passCriteria?.outlineAudit,
+                                maxTotalIssues: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Scoring Rules */}
+                <div>
+                  <h4 className="text-xs font-bold text-muted-foreground mb-2">分值计算规则</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">Critical 扣分权重</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.scoringRules?.criticalIssueWeight ?? 3}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              scoringRules: {
+                                ...auditConfig.passCriteria?.scoringRules,
+                                criticalIssueWeight: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        step="0.5"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">Warning 扣分权重</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.scoringRules?.warningIssueWeight ?? 1}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              scoringRules: {
+                                ...auditConfig.passCriteria?.scoringRules,
+                                warningIssueWeight: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        step="0.5"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">Info 扣分权重</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.scoringRules?.infoIssueWeight ?? 0.5}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              scoringRules: {
+                                ...auditConfig.passCriteria?.scoringRules,
+                                infoIssueWeight: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        step="0.5"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                    <div className="p-3 rounded-lg border border-border/50">
+                      <div className="text-xs text-muted-foreground mb-1">最低通过分数</div>
+                      <input
+                        type="number"
+                        value={auditConfig.passCriteria?.scoringRules?.minPassScore ?? 60}
+                        onChange={(e) => {
+                          setAuditConfig({
+                            ...auditConfig,
+                            passCriteria: {
+                              ...auditConfig.passCriteria,
+                              scoringRules: {
+                                ...auditConfig.passCriteria?.scoringRules,
+                                minPassScore: Number(e.target.value)
+                              }
+                            }
+                          });
+                        }}
+                        min="0"
+                        max="100"
+                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Save Button */}
               <div className="flex justify-end gap-3 pt-4 border-t border-border/50">
                 <button

@@ -16,12 +16,17 @@ import {
   type LogEntry,
   type ChapterMeta,
 } from "@actalk/inkos-core";
-import { access, readFile, readdir, unlink, rename } from "node:fs/promises";
+import { access, readFile, writeFile, readdir, unlink, rename, mkdir } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { join } from "node:path";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
+import {
+  loadAuditConfig,
+  getDefaultAuditConfig,
+  saveProjectAuditConfig,
+} from "@actalk/inkos-core";
 
 // --- Event bus for SSE ---
 
@@ -171,6 +176,23 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       platform?: string;
       chapterWordCount?: number;
       targetChapters?: number;
+      useGlobalAuditConfig?: boolean;
+      auditConfig?: {
+        dimensions: Array<{ id: string; name: string; enabled: boolean; weight: number }>;
+        scoring: {
+          baseScore: number;
+          penalties: { auditIssue: number; aiTellDensity: number; paragraphWarning: number };
+          weights: { auditPassRate: number; aiTellDensity: number; paragraphWarnings: number; hookResolveRate: number; duplicateTitles: number };
+        };
+        validationRules: {
+          bannedPatterns: string[];
+          bannedDashes: boolean;
+          transitionWordDensity: number;
+          fatigueWordLimit: number;
+          maxConsecutiveLe: number;
+          maxParagraphLength: number;
+        };
+      };
     }>();
 
     const now = new Date().toISOString();
@@ -191,7 +213,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     const pipeline = new PipelineRunner(await buildPipelineConfig());
     pipeline.initBook(bookConfig).then(
-      () => {
+      async () => {
+        // Save audit config if not using global config
+        if (body.useGlobalAuditConfig === false && body.auditConfig) {
+          try {
+            await state.saveAuditConfig(bookId, body.auditConfig);
+          } catch (e) {
+            console.warn("Failed to save audit config:", e);
+          }
+        }
         bookCreateStatus.delete(bookId);
         broadcast("book:created", { bookId });
       },
@@ -587,6 +617,59 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const { writeFile: writeFileFs } = await import("node:fs/promises");
       await writeFileFs(configPath, JSON.stringify(existing, null, 2), "utf-8");
       return c.json({ ok: true, language });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Audit Config ---
+
+  app.get("/api/audit-config/default", async (c) => {
+    try {
+      const defaultConfig = getDefaultAuditConfig();
+      return c.json(defaultConfig);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.get("/api/books/:id/audit-config", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const config = await state.loadAuditConfig(id);
+      if (config) {
+        return c.json(config);
+      }
+      // Return default config if no project config exists
+      const defaultConfig = getDefaultAuditConfig();
+      return c.json(defaultConfig);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.put("/api/books/:id/audit-config", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{
+      dimensions: Array<{ id: string; name: string; enabled: boolean; weight: number }>;
+      scoring: {
+        baseScore: number;
+        penalties: { auditIssue: number; aiTellDensity: number; paragraphWarning: number };
+        weights: { auditPassRate: number; aiTellDensity: number; paragraphWarnings: number; hookResolveRate: number; duplicateTitles: number };
+      };
+      validationRules: {
+        bannedPatterns: string[];
+        bannedDashes: boolean;
+        transitionWordDensity: number;
+        fatigueWordLimit: number;
+        maxConsecutiveLe: number;
+        maxParagraphLength: number;
+      };
+    }>();
+
+    try {
+      await state.saveAuditConfig(id, body);
+      return c.json({ ok: true });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
