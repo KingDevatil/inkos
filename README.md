@@ -16,22 +16,6 @@
   <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
 </p>
 
----
-
-AI Agent 自主写小说——写、审、改，全程接管。覆盖玄幻、仙侠、都市、科幻等多种风格，支持续写、番外、同人、仿写等创作形式。人工审核门控确保你始终掌控全局。已发布为 [OpenClaw](https://clawhub.ai/narcooo/inkos) skill。
-
-**InkOS Studio 正式发布！** — `inkos studio` 启动本地 Web 工作台。书籍管理、章节审阅编辑、实时写作进度、市场雷达、数据分析、AI 检测、文风分析、题材管理、守护进程控制、真相文件编辑——CLI 能做的，Studio 全部可视化。
-
-**Native English novel writing now supported！** Set `--lang en` to write in English. See [English README](README.en.md) for details.
-
-## 欢迎交流
-
-> 当前更新相对频繁，后续会持续新增功能与优化写作效果。
-> 欢迎加群反馈问题、提出需求，也欢迎关注项目动态 — 我们的目标是做最强的基于小说的内容生态创作 AI Agent。
-
-<p align="center">
-  <img src="assets/wechat-group.jpg" width="300" alt="微信交流群">
-</p>
 
 ## 快速开始
 
