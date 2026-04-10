@@ -49,6 +49,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   let cachedConfig = initialConfig;
 
   app.use("/*", cors());
+  
+  // Health check endpoint
+  app.get("/health", (c) => {
+    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+  
+  app.get("/api/health", (c) => {
+    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
 
   // Structured error handler — ApiError returns typed JSON, others return 500
   app.onError((error, c) => {

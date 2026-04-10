@@ -25,7 +25,8 @@
     "build:server": "tsc -p tsconfig.server.json",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "start": "node dist/api/index.js"
   },
   "dependencies": {
     "@actalk/inkos-core": "workspace:^1.1.1",

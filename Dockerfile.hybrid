@@ -53,14 +53,19 @@ COPY --from=builder /app/node_modules ./node_modules
 # 创建数据目录
 RUN mkdir -p /app/books /app/.config/inkos /app/logs
 
+# 初始化项目配置
+RUN echo '{"name":"InkOS Studio","language":"zh","llm":{"provider":"openai","model":"gpt-4","baseUrl":"https://api.openai.com/v1","apiKey":"","temperature":0.7,"maxTokens":4000,"stream":true},"daemon":{"enabled":false,"maxConcurrentBooks":1,"chaptersPerCycle":1,"schedule":{"radarCron":"0 */6 * * *","writeCron":"0 * * * *"},"retryDelayMs":60000,"cooldownAfterChapterMs":30000,"maxChaptersPerDay":24},"notify":[]}' > /app/books/inkos.json
+
 # 暴露端口
 EXPOSE 3000
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/doctor || exit 1
 
 # 启动命令
+ENV INKOS_PROJECT_ROOT=/app/books
+ENV INKOS_STUDIO_PORT=3000
 CMD ["pnpm", "--filter", "@actalk/inkos-studio", "start"]
 
 # ==========================================
@@ -90,8 +95,6 @@ RUN mkdir -p /app/books /app/.config/inkos /app/logs
 # 暴露端口
 EXPOSE 3001
 
-# 复制 Agent API 入口脚本
-COPY --from=builder /app/packages/studio/dist/api ./api
-
 # 启动命令 - 仅启动 API 服务
-CMD ["node", "./api/agent-server.js", "--port", "3001"]
+ENV INKOS_PROJECT_ROOT=/app/books
+CMD ["node", "./packages/studio/dist/api/agent-server.js", "--port", "3001"]
