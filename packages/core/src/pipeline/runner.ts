@@ -498,6 +498,52 @@ export class PipelineRunner {
     }
   }
 
+  /**
+   * Regenerate foundation (outline) for an existing book.
+   * Preserves existing chapters but updates story bible and other foundation files.
+   */
+  async regenerateFoundation(book: BookConfig, externalContext?: string): Promise<void> {
+    const architect = new ArchitectAgent(this.agentCtxFor("architect", book.id));
+    const bookDir = this.state.bookDir(book.id);
+    const stageLanguage = await this.resolveBookLanguage(book);
+
+    this.logStage(stageLanguage, { zh: "重新生成基础设定", en: "regenerating foundation" });
+    const { profile: gp } = await this.loadGenreProfile(book.genre);
+    const reviewer = new FoundationReviewerAgent(this.agentCtxFor("foundation-reviewer", book.id));
+    const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" as const : "zh" as const;
+    const foundation = await this.generateAndReviewFoundation({
+      generate: (reviewFeedback) => architect.generateFoundation(
+        book,
+        externalContext ?? this.config.externalContext,
+        reviewFeedback,
+      ),
+      reviewer,
+      mode: "original",
+      language: resolvedLanguage,
+      stageLanguage,
+    });
+
+    this.logStage(stageLanguage, { zh: "更新基础设定文件", en: "updating foundation files" });
+    await architect.writeFoundationFiles(
+      bookDir,
+      foundation,
+      gp.numericalSystem,
+      book.language ?? gp.language,
+    );
+
+    this.logStage(stageLanguage, { zh: "更新控制文档", en: "updating control documents" });
+    await this.state.ensureControlDocumentsAt(
+      bookDir,
+      book.language ?? gp.language,
+      externalContext ?? this.config.externalContext,
+    );
+
+    this.logStage(stageLanguage, { zh: "创建新快照", en: "creating new snapshot" });
+    const chapterIndex = await this.state.loadChapterIndex(book.id);
+    const currentChapter = chapterIndex.length > 0 ? chapterIndex[chapterIndex.length - 1].number : 0;
+    await this.state.snapshotStateAt(bookDir, currentChapter);
+  }
+
   /** Import external source material and generate fanfic_canon.md */
   async importFanficCanon(
     bookId: string,

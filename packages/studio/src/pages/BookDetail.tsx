@@ -55,6 +55,13 @@ interface BookData {
   readonly nextChapter: number;
 }
 
+interface GenreInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly source: "project" | "builtin";
+  readonly language: "zh" | "en";
+}
+
 type ReviseMode = "spot-fix" | "polish" | "rewrite" | "rework" | "anti-detect";
 type ExportFormat = "txt" | "md" | "epub";
 type BookStatus = "active" | "paused" | "outlining" | "completed" | "dropped";
@@ -115,6 +122,7 @@ export function BookDetail({
 }) {
   const c = useColors(theme);
   const { data, loading, error, refetch } = useApi<BookData>(`/books/${bookId}`);
+  const { data: genreData } = useApi<{ genres: ReadonlyArray<GenreInfo> }>("/genres");
   const [writeRequestPending, setWriteRequestPending] = useState(false);
   const [draftRequestPending, setDraftRequestPending] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -136,6 +144,11 @@ export function BookDetail({
   const [savingAuditConfig, setSavingAuditConfig] = useState(false);
   const [showAuditConfig, setShowAuditConfig] = useState(false);
   const [activeAuditTab, setActiveAuditTab] = useState<"dimensions" | "validation" | "chapter" | "foundation" | "help">("dimensions");
+  const [showOutlineRegenerate, setShowOutlineRegenerate] = useState(false);
+  const [outlineGenre, setOutlineGenre] = useState("");
+  const [outlineBrief, setOutlineBrief] = useState("");
+  const [outlineFileName, setOutlineFileName] = useState("");
+  const [regeneratingOutline, setRegeneratingOutline] = useState(false);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -147,202 +160,115 @@ export function BookDetail({
         setOpenDropdown(null);
       }
     };
-    if (openDropdown !== null) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
+    document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [openDropdown]);
+  }, []);
 
   useEffect(() => {
-    const recent = sse.messages.at(-1);
-    if (!recent) return;
-
-    const data = recent.data as { bookId?: string } | null;
-    if (data?.bookId !== bookId) return;
-
-    if (recent.event === "write:start") {
-      setWriteRequestPending(false);
-      return;
-    }
-
-    if (recent.event === "draft:start") {
-      setDraftRequestPending(false);
-      return;
-    }
-
-    if (shouldRefetchBookView(recent, bookId)) {
-      setWriteRequestPending(false);
-      setDraftRequestPending(false);
+    if (shouldRefetchBookView(sse.messages, bookId)) {
       refetch();
     }
-  }, [bookId, refetch, sse.messages]);
+  }, [sse.messages, bookId, refetch]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="max-w-3xl mx-auto p-6">
+        <div className={`border ${c.error} rounded-lg px-4 py-3`}>
+          {error || "Book not found"}
+        </div>
+        <button onClick={nav.toDashboard} className={`mt-4 ${c.link}`}>
+          {t("bread.books")}
+        </button>
+      </div>
+    );
+  }
+
+  const { book, chapters } = data;
+  const currentWordCount = settingsWordCount ?? book.chapterWordCount;
+  const currentTargetChapters = settingsTargetChapters ?? book.targetChapters ?? 200;
 
   const handleWriteNext = async () => {
     setWriteRequestPending(true);
     try {
-      await postApi(`/books/${bookId}/write-next`);
+      await postApi(`/books/${bookId}/write`, {});
     } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to start writing");
+    } finally {
       setWriteRequestPending(false);
-      alert(e instanceof Error ? e.message : "Failed");
     }
+    refetch();
   };
 
-  const handleDraft = async () => {
+  const handleDraftNext = async () => {
     setDraftRequestPending(true);
     try {
-      await postApi(`/books/${bookId}/draft`);
+      await postApi(`/books/${bookId}/draft`, {});
     } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to start drafting");
+    } finally {
       setDraftRequestPending(false);
-      alert(e instanceof Error ? e.message : "Failed");
     }
+    refetch();
   };
 
   const handleDeleteBook = async () => {
-    setConfirmDeleteOpen(false);
     setDeleting(true);
     try {
-      const res = await fetch(`/api/books/${bookId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error((json as { error?: string }).error ?? `${res.status}`);
-      }
+      await fetchJson(`/books/${bookId}`, { method: "DELETE" });
       nav.toDashboard();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed");
-    } finally {
+      alert(e instanceof Error ? e.message : "Failed to delete book");
       setDeleting(false);
     }
   };
 
-  const handleRewrite = async (chapterNum: number) => {
-    const brief = window.prompt(
-      data?.book.language === "en"
-        ? "Optional rewrite brief for this run only. Leave blank to use existing focus."
-        : "可选：输入这次重写要遵循的补充想法。留空则沿用现有 focus。",
-      "",
-    );
-    if (brief === null) return;
-    setRewritingChapters((prev) => [...prev, chapterNum]);
-    try {
-      await fetchJson(`/books/${bookId}/rewrite/${chapterNum}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brief: brief.trim() || undefined }),
-      });
-      refetch();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Rewrite failed");
-    } finally {
-      setRewritingChapters((prev) => prev.filter((n) => n !== chapterNum));
+  const handleApproveAll = async () => {
+    const reviewable = data.chapters.filter((ch) => ch.status === "ready-for-review");
+    for (const ch of reviewable) {
+      try {
+        await postApi(`/books/${bookId}/chapters/${ch.number}/approve`, {});
+      } catch (e) {
+        console.error(`Failed to approve chapter ${ch.number}:`, e);
+      }
     }
-  };
-
-  const handleRevise = async (chapterNum: number, mode: ReviseMode) => {
-    const brief = window.prompt(
-      data?.book.language === "en"
-        ? "Optional revise brief for this run only. Leave blank to use existing focus."
-        : "可选：输入这次修订要遵循的补充想法。留空则沿用现有 focus。",
-      "",
-    );
-    if (brief === null) return;
-    setRevisingChapters((prev) => [...prev, chapterNum]);
-    try {
-      await fetchJson(`/books/${bookId}/revise/${chapterNum}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, brief: brief.trim() || undefined }),
-      });
-      refetch();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Revision failed");
-    } finally {
-      setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
-    }
-  };
-
-  const handleSync = async (chapterNum: number) => {
-    const brief = window.prompt(
-      data?.book.language === "en"
-        ? "Optional sync brief for interpreting the edited chapter body. Leave blank to sync directly from the text."
-        : "可选：输入这次同步时要遵循的补充说明。留空则直接按正文同步。",
-      "",
-    );
-    if (brief === null) return;
-    setSyncingChapters((prev) => [...prev, chapterNum]);
-    try {
-      await fetchJson(`/books/${bookId}/resync/${chapterNum}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brief: brief.trim() || undefined }),
-      });
-      refetch();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Sync failed");
-    } finally {
-      setSyncingChapters((prev) => prev.filter((n) => n !== chapterNum));
-    }
-  };
-
-  const handleDeleteChapter = async (chapterNum: number) => {
-    if (!window.confirm(data?.book.language === "en" ? `Are you sure you want to delete chapter ${chapterNum}?` : `确定要删除第 ${chapterNum} 章吗？`)) {
-      return;
-    }
-    setDeletingChapters((prev) => [...prev, chapterNum]);
-    try {
-      await fetchJson(`/books/${bookId}/chapters/${chapterNum}`, {
-        method: "DELETE",
-      });
-      refetch();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed");
-    } finally {
-      setDeletingChapters((prev) => prev.filter((n) => n !== chapterNum));
-    }
+    refetch();
   };
 
   const handleFixChapterOrder = async () => {
-    if (!window.confirm(data?.book.language === "en" ? "Are you sure you want to fix chapter order? This will renumber all chapters sequentially." : "确定要修复章节顺序吗？这将按顺序重新编号所有章节。")) {
-      return;
-    }
     try {
-      const result = await fetchJson(`/books/${bookId}/chapters/fix-order`, {
-        method: "POST",
-      });
-      alert(data?.book.language === "en" ? `Chapter order fixed. ${result.chapterCount} chapters renumbered.` : `章节顺序已修复。${result.chapterCount} 个章节已重新编号。`);
+      await postApi(`/books/${bookId}/fix-order`, {});
+      alert("章节顺序已修复");
       refetch();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Fix order failed");
+      alert(e instanceof Error ? e.message : "修复章节顺序失败");
     }
   };
 
   const handleSaveSettings = async () => {
-    if (!data) return;
     setSavingSettings(true);
     try {
       const body: Record<string, unknown> = {};
       if (settingsWordCount !== null) body.chapterWordCount = settingsWordCount;
       if (settingsTargetChapters !== null) body.targetChapters = settingsTargetChapters;
       if (settingsStatus !== null) body.status = settingsStatus;
-      await fetchJson(`/books/${bookId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      await postApi(`/books/${bookId}/settings`, body);
+      setSettingsWordCount(null);
+      setSettingsTargetChapters(null);
+      setSettingsStatus(null);
       refetch();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Save failed");
+      alert(e instanceof Error ? e.message : "Failed to save settings");
     } finally {
       setSavingSettings(false);
     }
-  };
-
-  const handleApproveAll = async () => {
-    if (!data) return;
-    const reviewable = data.chapters.filter((ch) => ch.status === "ready-for-review");
-    for (const ch of reviewable) {
-      await postApi(`/books/${bookId}/chapters/${ch.number}/approve`);
-    }
-    refetch();
   };
 
   const loadAuditConfig = async () => {
@@ -358,6 +284,45 @@ export function BookDetail({
     }
   };
 
+  const handleOutlineFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext !== "txt" && ext !== "md") {
+      alert("仅支持 .txt 和 .md 格式的简报文件");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setOutlineBrief(event.target?.result as string || "");
+      setOutlineFileName(file.name);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleRegenerateOutline = async () => {
+    if (!outlineGenre) {
+      alert("请选择书籍题材");
+      return;
+    }
+    setRegeneratingOutline(true);
+    try {
+      await postApi(`/books/${bookId}/regenerate-outline`, {
+        genre: outlineGenre,
+        brief: outlineBrief || undefined,
+      });
+      setShowOutlineRegenerate(false);
+      setOutlineGenre("");
+      setOutlineBrief("");
+      setOutlineFileName("");
+      alert("大纲重生成已开始，请等待完成");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "大纲重生成失败");
+    } finally {
+      setRegeneratingOutline(false);
+    }
+  };
+
   const saveAuditConfig = async () => {
     if (!auditConfig) return;
     setSavingAuditConfig(true);
@@ -367,7 +332,7 @@ export function BookDetail({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(auditConfig),
       });
-      alert(t("common.saveSuccess"));
+      setShowAuditConfig(false);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to save audit config");
     } finally {
@@ -375,195 +340,140 @@ export function BookDetail({
     }
   };
 
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center py-32 space-y-4">
-      <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-      <span className="text-sm text-muted-foreground">{t("common.loading")}</span>
-    </div>
-  );
-
-  if (error) return <div className="text-destructive p-8 bg-destructive/5 rounded-xl border border-destructive/20">Error: {error}</div>;
-  if (!data) return null;
-
-  const { book, chapters } = data;
-  const totalWords = chapters.reduce((sum, ch) => sum + (ch.wordCount ?? 0), 0);
   const reviewCount = chapters.filter((ch) => ch.status === "ready-for-review").length;
-
-  const currentWordCount = settingsWordCount ?? book.chapterWordCount;
-  const currentTargetChapters = settingsTargetChapters ?? book.targetChapters ?? 0;
   const currentStatus = settingsStatus ?? (book.status as BookStatus);
 
-  const exportHref = `/api/books/${bookId}/export?format=${exportFormat}${exportApprovedOnly ? "&approvedOnly=true" : ""}`;
-
   return (
-    <div className="space-y-8 fade-in">
-      {/* Breadcrumbs */}
-      <nav className="flex items-center gap-2 text-[13px] font-medium text-muted-foreground">
-        <button
-          onClick={nav.toDashboard}
-          className="hover:text-primary transition-colors flex items-center gap-1"
-        >
-          <ChevronLeft size={14} />
-          {t("bread.books")}
-        </button>
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <button onClick={nav.toDashboard} className={c.link}>{t("bread.books")}</button>
         <span className="text-border">/</span>
-        <span className="text-foreground">{book.title}</span>
-      </nav>
+        <span className="truncate max-w-[200px]">{book.title}</span>
+      </div>
 
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-border/40 pb-8">
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <h1 className="text-4xl font-serif font-medium">{book.title}</h1>
-            {book.language === "en" && (
-              <span className="px-1.5 py-0.5 rounded border border-primary/20 text-primary text-[10px] font-bold">EN</span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground font-medium">
-            <span className="px-2 py-0.5 rounded bg-secondary/50 text-foreground/70 uppercase tracking-wider text-xs">{book.genre}</span>
-            <div className="flex items-center gap-1.5">
-              <FileText size={14} />
-              <span>{chapters.length} {t("dash.chapters")}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Zap size={14} />
-              <span>{totalWords.toLocaleString()} {t("book.words")}</span>
-            </div>
-            {book.fanficMode && (
-              <span className="flex items-center gap-1 text-purple-500">
-                <Sparkles size={12} />
-                <span className="italic">fanfic:{book.fanficMode}</span>
-              </span>
-            )}
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-3xl">{book.title}</h1>
+          <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground">
+            <span className="px-2 py-0.5 rounded bg-secondary text-secondary-foreground text-xs font-medium">
+              {book.genre}
+            </span>
+            <span>{chapters.length} {t("dash.chapters")}</span>
+            <span>·</span>
+            <span>{book.chapterWordCount} {t("book.wordsPerChapter")}</span>
           </div>
         </div>
-
-        <div className="flex flex-wrap gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={handleWriteNext}
-            disabled={writing || drafting}
-            className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-primary text-primary-foreground rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+            disabled={writing}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-all ${
+              writing
+                ? "bg-muted text-muted-foreground cursor-not-allowed"
+                : "bg-primary text-primary-foreground hover:scale-105 active:scale-95"
+            }`}
           >
             {writing ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Zap size={16} />}
-            {writing ? t("dash.writing") : t("book.writeNext")}
-          </button>
-          <button
-            onClick={handleDraft}
-            disabled={writing || drafting}
-            className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-secondary text-foreground rounded-xl hover:bg-secondary/80 transition-all border border-border/50 disabled:opacity-50"
-          >
-            {drafting ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <Wand2 size={16} />}
-            {drafting ? t("book.drafting") : t("book.draftOnly")}
+            {writing ? t("dash.writing") : t("dash.writeNext")}
           </button>
           <button
             onClick={() => setConfirmDeleteOpen(true)}
             disabled={deleting}
-            className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-white transition-all border border-destructive/20 disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-destructive text-destructive-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
           >
-            {deleting ? <div className="w-4 h-4 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" /> : <Trash2 size={16} />}
-            {deleting ? t("common.loading") : t("book.deleteBook")}
+            {deleting ? <div className="w-4 h-4 border-2 border-destructive-foreground/20 border-t-destructive-foreground rounded-full animate-spin" /> : <Trash2 size={16} />}
+            {t("book.deleteBook")}
           </button>
         </div>
       </div>
 
-      {(writing || drafting || activity.lastError) && (
-        <div
-          className={`rounded-2xl border px-4 py-3 text-sm ${
-            activity.lastError
-              ? "border-destructive/30 bg-destructive/5 text-destructive"
-              : "border-primary/20 bg-primary/[0.04] text-foreground"
-          }`}
-        >
-          {activity.lastError ? (
-            <span>
-              {t("book.pipelineFailed")}: {activity.lastError}
-            </span>
-          ) : writing ? (
-            <span>{t("book.pipelineWriting")}</span>
-          ) : (
-            <span>{t("book.pipelineDrafting")}</span>
-          )}
-        </div>
-      )}
-
-      {/* Tool Strip */}
+      {/* Action Bar */}
       <div className="flex flex-wrap items-center gap-2 py-1">
-          {reviewCount > 0 && (
-            <button
-              onClick={handleApproveAll}
-              className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-emerald-500/10 text-emerald-600 rounded-lg hover:bg-emerald-500/20 transition-all border border-emerald-500/20"
-            >
-              <CheckCheck size={14} />
-              {t("book.approveAll")} ({reviewCount})
-            </button>
-          )}
+        {reviewCount > 0 && (
           <button
-            onClick={() => (nav as { toTruth?: (id: string) => void }).toTruth?.(bookId)}
+            onClick={handleApproveAll}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-emerald-500/10 text-emerald-600 rounded-lg hover:bg-emerald-500/20 transition-all border border-emerald-500/20"
+          >
+            <CheckCheck size={14} />
+            {t("book.approveAll")} ({reviewCount})
+          </button>
+        )}
+        <button
+          onClick={() => (nav as { toTruth?: (id: string) => void }).toTruth?.(bookId)}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+        >
+          <Database size={14} />
+          {t("book.truthFiles")}
+        </button>
+        <button
+          onClick={() => nav.toAnalytics(bookId)}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+        >
+          <BarChart2 size={14} />
+          {t("book.analytics")}
+        </button>
+        <button
+          onClick={handleFixChapterOrder}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+        >
+          <RefreshCw size={14} />
+          {t("book.fixOrder")}
+        </button>
+        <button
+          onClick={() => setShowOutlineRegenerate(true)}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+        >
+          <Wand2 size={14} />
+          重新生成大纲
+        </button>
+        <button
+          onClick={loadAuditConfig}
+          disabled={loadingAuditConfig}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50 disabled:opacity-50"
+        >
+          {loadingAuditConfig ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <ShieldCheck size={14} />}
+          审计配置
+        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+            className="px-2 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg border border-border/50 outline-none"
+          >
+            <option value="txt">TXT</option>
+            <option value="md">MD</option>
+            <option value="epub">EPUB</option>
+          </select>
+          <label className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={exportApprovedOnly}
+              onChange={(e) => setExportApprovedOnly(e.target.checked)}
+              className="rounded border-border/50"
+            />
+            {t("book.approvedOnly")}
+          </label>
+          <button
+            onClick={async () => {
+              try {
+                const data = await fetchJson<{ path?: string; chapters?: number }>(`/books/${bookId}/export-save`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ format: exportFormat, approvedOnly: exportApprovedOnly }),
+                });
+                alert(`${t("common.exportSuccess")}\n${data.path}\n(${data.chapters} ${t("dash.chapters")})`);
+              } catch (e) {
+                alert(e instanceof Error ? e.message : "Export failed");
+              }
+            }}
             className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
           >
-            <Database size={14} />
-            {t("book.truthFiles")}
+            <Download size={14} />
+            {t("book.export")}
           </button>
-          <button
-            onClick={() => nav.toAnalytics(bookId)}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
-          >
-            <BarChart2 size={14} />
-            {t("book.analytics")}
-          </button>
-          <button
-            onClick={handleFixChapterOrder}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
-          >
-            <RefreshCw size={14} />
-            {t("book.fixOrder")}
-          </button>
-          <button
-            onClick={loadAuditConfig}
-            disabled={loadingAuditConfig}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50 disabled:opacity-50"
-          >
-            {loadingAuditConfig ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <ShieldCheck size={14} />}
-            审计配置
-          </button>
-          <div className="flex items-center gap-2">
-            <select
-              value={exportFormat}
-              onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
-              className="px-2 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg border border-border/50 outline-none"
-            >
-              <option value="txt">TXT</option>
-              <option value="md">MD</option>
-              <option value="epub">EPUB</option>
-            </select>
-            <label className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={exportApprovedOnly}
-                onChange={(e) => setExportApprovedOnly(e.target.checked)}
-                className="rounded border-border/50"
-              />
-              {t("book.approvedOnly")}
-            </label>
-            <button
-              onClick={async () => {
-                try {
-                  const data = await fetchJson<{ path?: string; chapters?: number }>(`/books/${bookId}/export-save`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ format: exportFormat, approvedOnly: exportApprovedOnly }),
-                  });
-                  alert(`${t("common.exportSuccess")}\n${data.path}\n(${data.chapters} ${t("dash.chapters")})`);
-                } catch (e) {
-                  alert(e instanceof Error ? e.message : "Export failed");
-                }
-              }}
-              className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
-            >
-              <Download size={14} />
-              {t("book.export")}
-            </button>
-          </div>
+        </div>
       </div>
 
       {/* Book Settings */}
@@ -602,187 +512,185 @@ export function BookDetail({
               <option value="dropped">{t("book.statusDropped")}</option>
             </select>
           </div>
-          <button
-            onClick={handleSaveSettings}
-            disabled={savingSettings}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
-          >
-            {savingSettings ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Save size={14} />}
-            {savingSettings ? t("book.saving") : t("book.save")}
-          </button>
+          {(settingsWordCount !== null || settingsTargetChapters !== null || settingsStatus !== null) && (
+            <button
+              onClick={handleSaveSettings}
+              disabled={savingSettings}
+              className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+            >
+              {savingSettings ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Save size={14} />}
+              {t("common.save")}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Chapters Table */}
-      <div className="paper-sheet rounded-2xl overflow-hidden border border-border/40 shadow-xl shadow-primary/5">
+      <div className="paper-sheet rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-border/40">
+          <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">{t("book.chapters")}</h2>
+        </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
+          <table className="w-full">
             <thead>
-              <tr className="bg-muted/30 border-b border-border/50">
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-16">#</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.manuscriptTitle")}</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-28">{t("book.words")}</th>
+              <tr className="border-b border-border/40">
+                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-20">{t("book.chapter")}</th>
+                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.title")}</th>
+                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-24">{t("book.words")}</th>
                 <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-36">{t("book.status")}</th>
-                <th className="text-right px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.curate")}</th>
+                <th className="text-right px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-24">{t("book.actions")}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border/30">
-              {chapters.map((ch, index) => {
-                const staggerClass = `stagger-${Math.min(index + 1, 5)}`;
-                return (
-                <tr key={ch.number} className={`group hover:bg-primary/[0.02] transition-colors fade-in ${staggerClass}`}>
-                  <td className="px-6 py-4 text-muted-foreground/60 font-mono text-xs">{ch.number.toString().padStart(2, '0')}</td>
+            <tbody>
+              {chapters.map((ch) => (
+                <tr key={ch.number} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                  <td className="px-6 py-4 text-sm font-medium">{ch.number}</td>
                   <td className="px-6 py-4">
                     <button
                       onClick={() => nav.toChapter(bookId, ch.number)}
-                      className="font-serif text-lg font-medium hover:text-primary transition-colors text-left"
+                      className={`text-sm font-medium text-left hover:underline ${c.link}`}
                     >
-                      {ch.title || t("chapter.label").replace("{n}", String(ch.number))}
+                      {ch.title || `${t("chapter.label", { n: ch.number })}`}
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-muted-foreground font-medium tabular-nums text-xs">{(ch.wordCount ?? 0).toLocaleString()}</td>
+                  <td className="px-6 py-4 text-sm text-muted-foreground">{ch.wordCount.toLocaleString()}</td>
                   <td className="px-6 py-4">
                     <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tight ${STATUS_CONFIG[ch.status]?.color ?? "bg-muted text-muted-foreground"}`}>
                       {STATUS_CONFIG[ch.status]?.icon}
                       {translateChapterStatus(ch.status, t)}
                     </div>
+                    {ch.status === "ready-for-review" && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <button
+                          onClick={async () => {
+                            try {
+                              await postApi(`/books/${bookId}/chapters/${ch.number}/approve`, {});
+                              refetch();
+                            } catch (e) {
+                              alert(e instanceof Error ? e.message : "Failed to approve");
+                            }
+                          }}
+                          className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/10 text-emerald-600 rounded hover:bg-emerald-500/20 transition-colors"
+                        >
+                          {t("book.approve")}
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await postApi(`/books/${bookId}/chapters/${ch.number}/reject`, {});
+                              refetch();
+                            } catch (e) {
+                              alert(e instanceof Error ? e.message : "Failed to reject");
+                            }
+                          }}
+                          className="px-2 py-0.5 text-[10px] font-bold bg-destructive/10 text-destructive rounded hover:bg-destructive/20 transition-colors"
+                        >
+                          {t("book.reject")}
+                        </button>
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <div className="flex gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                      {ch.status === "ready-for-review" && (
-                        <>
+                    <div className="relative" ref={dropdownRef}>
+                      <button
+                        onClick={() => setOpenDropdown(openDropdown === ch.number ? null : ch.number)}
+                        className="p-1.5 rounded-lg hover:bg-secondary/50 transition-colors"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                      {openDropdown === ch.number && (
+                        <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border/50 rounded-lg shadow-lg z-10 py-1">
                           <button
-                            onClick={async () => { await postApi(`/books/${bookId}/chapters/${ch.number}/approve`); refetch(); }}
-                            className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all shadow-sm"
-                            title={t("book.approve")}
+                            onClick={async () => {
+                              setOpenDropdown(null);
+                              try {
+                                await postApi(`/books/${bookId}/chapters/${ch.number}/audit`, {});
+                                refetch();
+                              } catch (e) {
+                                alert(e instanceof Error ? e.message : "Failed to audit");
+                              }
+                            }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2"
                           >
-                            <Check size={14} />
+                            <Search size={14} />
+                            {t("book.audit")}
                           </button>
                           <button
-                            onClick={async () => { await postApi(`/books/${bookId}/chapters/${ch.number}/reject`); refetch(); }}
-                            className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all shadow-sm"
-                            title={t("book.reject")}
+                            onClick={async () => {
+                              setOpenDropdown(null);
+                              setRewritingChapters((prev) => [...prev, ch.number]);
+                              try {
+                                await postApi(`/books/${bookId}/chapters/${ch.number}/rewrite`, {});
+                                refetch();
+                              } catch (e) {
+                                alert(e instanceof Error ? e.message : "Failed to rewrite");
+                              } finally {
+                                setRewritingChapters((prev) => prev.filter((n) => n !== ch.number));
+                              }
+                            }}
+                            disabled={rewritingChapters.includes(ch.number)}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
                           >
-                            <X size={14} />
+                            {rewritingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <RefreshCw size={14} />}
+                            {t("book.rewrite")}
                           </button>
-                        </>
+                          <button
+                            onClick={async () => {
+                              setOpenDropdown(null);
+                              setSyncingChapters((prev) => [...prev, ch.number]);
+                              try {
+                                await postApi(`/books/${bookId}/chapters/${ch.number}/sync`, {});
+                                refetch();
+                              } catch (e) {
+                                alert(e instanceof Error ? e.message : "Failed to sync");
+                              } finally {
+                                setSyncingChapters((prev) => prev.filter((n) => n !== ch.number));
+                              }
+                            }}
+                            disabled={syncingChapters.includes(ch.number)}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
+                          >
+                            {syncingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <Sparkles size={14} />}
+                            {t("book.sync")}
+                          </button>
+                          <div className="border-t border-border/50 my-1" />
+                          <button
+                            onClick={async () => {
+                              setOpenDropdown(null);
+                              if (!confirm(t("book.confirmDelete"))) return;
+                              setDeletingChapters((prev) => [...prev, ch.number]);
+                              try {
+                                await fetchJson(`/books/${bookId}/chapters/${ch.number}`, { method: "DELETE" });
+                                refetch();
+                              } catch (e) {
+                                alert(e instanceof Error ? e.message : "Failed to delete");
+                              } finally {
+                                setDeletingChapters((prev) => prev.filter((n) => n !== ch.number));
+                              }
+                            }}
+                            disabled={deletingChapters.includes(ch.number)}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-2 disabled:opacity-50"
+                          >
+                            {deletingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" /> : <Trash2 size={14} />}
+                            {t("book.delete")}
+                          </button>
+                        </div>
                       )}
-                      <button
-                        onClick={async () => {
-                          const auditResult = await fetchJson<{ passed?: boolean; issues?: unknown[] }>(`/books/${bookId}/audit/${ch.number}`, { method: "POST" });
-                          alert(auditResult.passed ? "Audit passed" : `Audit failed: ${auditResult.issues?.length ?? 0} issues`);
-                          refetch();
-                        }}
-                        className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
-                        title={t("book.audit")}
-                      >
-                        <ShieldCheck size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleRewrite(ch.number)}
-                        disabled={rewritingChapters.includes(ch.number)}
-                        className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm disabled:opacity-50"
-                        title={t("book.rewrite")}
-                      >
-                        {rewritingChapters.includes(ch.number)
-                          ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
-                          : <RotateCcw size={14} />}
-                      </button>
-                      <button
-                        onClick={() => handleSync(ch.number)}
-                        disabled={syncingChapters.includes(ch.number) || ch.number !== latestPersistedChapter}
-                        className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm disabled:opacity-50"
-                        title={data?.book.language === "en" ? "Sync truth/state from edited chapter" : "根据已编辑章节同步 truth/state"}
-                      >
-                        {syncingChapters.includes(ch.number)
-                          ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
-                          : <RefreshCw size={14} />}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleDeleteChapter(ch.number);
-                        }}
-                        disabled={deletingChapters.includes(ch.number)}
-                        className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all shadow-sm disabled:opacity-50"
-                        title={t("book.delete")}
-                      >
-                        {deletingChapters.includes(ch.number)
-                          ? <div className="w-3.5 h-3.5 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" />
-                          : <Trash2 size={14} />}
-                      </button>
-                      <div ref={openDropdown === ch.number ? dropdownRef : undefined} className="relative">
-                        <button
-                          disabled={revisingChapters.includes(ch.number)}
-                          onClick={() => setOpenDropdown(openDropdown === ch.number ? null : ch.number)}
-                          className="px-2 py-1.5 text-[11px] font-bold rounded-lg bg-card text-foreground border border-border/50 outline-none hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
-                          title="Revise with AI"
-                        >
-                          {revisingChapters.includes(ch.number) ? t("common.loading") : t("book.curate")}
-                          <ChevronDown size={10} />
-                        </button>
-                        {openDropdown === ch.number && (
-                          <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-lg z-50 min-w-[120px] overflow-hidden">
-                            <button
-                              onClick={() => { handleRevise(ch.number, "spot-fix"); setOpenDropdown(null); }}
-                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
-                            >
-                              {t("book.spotFix")}
-                            </button>
-                            <button
-                              onClick={() => { handleRevise(ch.number, "polish"); setOpenDropdown(null); }}
-                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
-                            >
-                              {t("book.polish")}
-                            </button>
-                            <button
-                              onClick={() => { handleRevise(ch.number, "rewrite"); setOpenDropdown(null); }}
-                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
-                            >
-                              {t("book.rewrite")}
-                            </button>
-                            <button
-                              onClick={() => { handleRevise(ch.number, "rework"); setOpenDropdown(null); }}
-                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
-                            >
-                              {t("book.rework")}
-                            </button>
-                            <button
-                              onClick={() => { handleRevise(ch.number, "anti-detect"); setOpenDropdown(null); }}
-                              className="w-full px-3 py-2 text-[11px] font-bold text-left hover:bg-primary/10 hover:text-primary transition-colors"
-                            >
-                              {t("book.antiDetect")}
-                            </button>
-                          </div>
-                        )}
-                      </div>
                     </div>
                   </td>
                 </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
         </div>
-
-        {chapters.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-12 h-12 rounded-full bg-muted/20 flex items-center justify-center mb-4">
-               <FileText size={20} className="text-muted-foreground/40" />
-            </div>
-            <p className="text-sm italic font-serif text-muted-foreground">
-              {t("book.noChapters")}
-            </p>
-          </div>
-        )}
       </div>
 
+      {/* Delete Confirmation */}
       <ConfirmDialog
-        open={confirmDeleteOpen}
-        title={t("book.deleteBook")}
-        message={t("book.confirmDelete")}
-        confirmLabel={t("common.delete")}
+        isOpen={confirmDeleteOpen}
+        title={t("book.confirmDeleteTitle")}
+        message={t("book.confirmDeleteMessage")}
+        confirmLabel={t("book.deleteBook")}
         cancelLabel={t("common.cancel")}
         variant="danger"
         onConfirm={handleDeleteBook}
@@ -997,82 +905,128 @@ export function BookDetail({
               )}
 
               {activeAuditTab === "validation" && (
-                <div className="space-y-4">
-                  <h3 className="text-sm font-bold mb-3">验证规则</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <h4 className="text-xs font-bold text-muted-foreground mb-2">禁止句式</h4>
-                      <input
-                        type="text"
-                        value={auditConfig.validationRules?.bannedPatterns?.join(", ") || ""}
-                        onChange={(e) => {
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-sm font-bold mb-3">禁止句式</h3>
+                    <div className="space-y-2">
+                      {auditConfig.validationRules.bannedPatterns.map((pattern: string, index: number) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={pattern}
+                            onChange={(e) => {
+                              const updated = [...auditConfig.validationRules.bannedPatterns];
+                              updated[index] = e.target.value;
+                              setAuditConfig({
+                                ...auditConfig,
+                                validationRules: { ...auditConfig.validationRules, bannedPatterns: updated }
+                              });
+                            }}
+                            className="flex-1 px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                            placeholder="输入正则表达式"
+                          />
+                          <button
+                            onClick={() => {
+                              const updated = auditConfig.validationRules.bannedPatterns.filter((_: string, i: number) => i !== index);
+                              setAuditConfig({
+                                ...auditConfig,
+                                validationRules: { ...auditConfig.validationRules, bannedPatterns: updated }
+                              });
+                            }}
+                            className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => {
                           setAuditConfig({
                             ...auditConfig,
                             validationRules: {
                               ...auditConfig.validationRules,
-                              bannedPatterns: e.target.value.split(",").map((p) => p.trim()).filter(Boolean)
+                              bannedPatterns: [...auditConfig.validationRules.bannedPatterns, ""]
                             }
                           });
                         }}
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                        placeholder="例如: 不是……而是……"
-                      />
+                        className="w-full py-2 text-sm text-primary border border-dashed border-primary/30 rounded-lg hover:bg-primary/5 transition-colors"
+                      >
+                        + 添加禁止句式
+                      </button>
                     </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <h4 className="text-xs font-bold text-muted-foreground mb-2">禁止破折号</h4>
-                      <input
-                        type="checkbox"
-                        checked={auditConfig.validationRules?.bannedDashes || false}
-                        onChange={(e) => {
-                          setAuditConfig({
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="flex items-center gap-2 mb-2">
+                        <input
+                          type="checkbox"
+                          checked={auditConfig.validationRules.bannedDashes}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            validationRules: {
-                              ...auditConfig.validationRules,
-                              bannedDashes: e.target.checked
-                            }
-                          });
-                        }}
-                        className="rounded border-border/50"
-                      />
+                            validationRules: { ...auditConfig.validationRules, bannedDashes: e.target.checked }
+                          })}
+                          className="rounded border-border/50"
+                        />
+                        <span className="text-sm font-medium">禁止破折号</span>
+                      </label>
                     </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <h4 className="text-xs font-bold text-muted-foreground mb-2">转折词密度</h4>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">转折词密度限制</label>
                       <input
                         type="number"
-                        value={auditConfig.validationRules?.transitionWordDensity || 1}
-                        onChange={(e) => {
-                          setAuditConfig({
-                            ...auditConfig,
-                            validationRules: {
-                              ...auditConfig.validationRules,
-                              transitionWordDensity: Number(e.target.value)
-                            }
-                          });
-                        }}
+                        value={auditConfig.validationRules.transitionWordDensity}
+                        onChange={(e) => setAuditConfig({
+                          ...auditConfig,
+                          validationRules: { ...auditConfig.validationRules, transitionWordDensity: Number(e.target.value) }
+                        })}
                         min="0"
                         max="1"
                         step="0.01"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
                       />
                     </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <h4 className="text-xs font-bold text-muted-foreground mb-2">对话密度</h4>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">疲劳词限制</label>
                       <input
                         type="number"
-                        value={auditConfig.validationRules?.dialogueDensity || 0.5}
-                        onChange={(e) => {
-                          setAuditConfig({
-                            ...auditConfig,
-                            validationRules: {
-                              ...auditConfig.validationRules,
-                              dialogueDensity: Number(e.target.value)
-                            }
-                          });
-                        }}
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        value={auditConfig.validationRules.fatigueWordLimit}
+                        onChange={(e) => setAuditConfig({
+                          ...auditConfig,
+                          validationRules: { ...auditConfig.validationRules, fatigueWordLimit: Number(e.target.value) }
+                        })}
+                        min="1"
+                        className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">最大连续"了"字数</label>
+                      <input
+                        type="number"
+                        value={auditConfig.validationRules.maxConsecutiveLe}
+                        onChange={(e) => setAuditConfig({
+                          ...auditConfig,
+                          validationRules: { ...auditConfig.validationRules, maxConsecutiveLe: Number(e.target.value) }
+                        })}
+                        min="1"
+                        className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">最大段落长度</label>
+                      <input
+                        type="number"
+                        value={auditConfig.validationRules.maxParagraphLength}
+                        onChange={(e) => setAuditConfig({
+                          ...auditConfig,
+                          validationRules: { ...auditConfig.validationRules, maxParagraphLength: Number(e.target.value) }
+                        })}
+                        min="1"
+                        className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
                       />
                     </div>
                   </div>
@@ -1080,321 +1034,246 @@ export function BookDetail({
               )}
 
               {activeAuditTab === "chapter" && (
-                <div className="space-y-4">
-                  <h3 className="text-sm font-bold mb-3">章节审计通过标准</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">最多 Critical 问题</div>
-                      <input
-                        type="number"
-                        value={auditConfig.passCriteria?.chapterAudit?.maxCriticalIssues ?? 0}
-                        onChange={(e) => {
-                          setAuditConfig({
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-sm font-bold mb-3">章节审核通过标准</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">最低通过分数</label>
+                        <input
+                          type="number"
+                          value={auditConfig.chapterAudit?.minPassScore ?? 60}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            passCriteria: {
-                              ...auditConfig.passCriteria,
-                              chapterAudit: {
-                                ...auditConfig.passCriteria?.chapterAudit,
-                                maxCriticalIssues: Number(e.target.value)
-                              }
-                            }
-                          });
-                        }}
-                        min="0"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">最多 Warning 问题</div>
-                      <input
-                        type="number"
-                        value={auditConfig.passCriteria?.chapterAudit?.maxWarningIssues ?? 5}
-                        onChange={(e) => {
-                          setAuditConfig({
+                            chapterAudit: { ...auditConfig.chapterAudit, minPassScore: Number(e.target.value) }
+                          })}
+                          min="0"
+                          max="100"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">最大 Critical 问题数</label>
+                        <input
+                          type="number"
+                          value={auditConfig.chapterAudit?.maxCriticalIssues ?? 0}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            passCriteria: {
-                              ...auditConfig.passCriteria,
-                              chapterAudit: {
-                                ...auditConfig.passCriteria?.chapterAudit,
-                                maxWarningIssues: Number(e.target.value)
-                              }
-                            }
-                          });
-                        }}
-                        min="0"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">最多总问题数</div>
-                      <input
-                        type="number"
-                        value={auditConfig.passCriteria?.chapterAudit?.maxTotalIssues ?? 10}
-                        onChange={(e) => {
-                          setAuditConfig({
+                            chapterAudit: { ...auditConfig.chapterAudit, maxCriticalIssues: Number(e.target.value) }
+                          })}
+                          min="0"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">最大 Warning 问题数</label>
+                        <input
+                          type="number"
+                          value={auditConfig.chapterAudit?.maxWarningIssues ?? 3}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            passCriteria: {
-                              ...auditConfig.passCriteria,
-                              chapterAudit: {
-                                ...auditConfig.passCriteria?.chapterAudit,
-                                maxTotalIssues: Number(e.target.value)
-                              }
-                            }
-                          });
-                        }}
-                        min="0"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
+                            chapterAudit: { ...auditConfig.chapterAudit, maxWarningIssues: Number(e.target.value) }
+                          })}
+                          min="0"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">最大总问题数</label>
+                        <input
+                          type="number"
+                          value={auditConfig.chapterAudit?.maxTotalIssues ?? 5}
+                          onChange={(e) => setAuditConfig({
+                            ...auditConfig,
+                            chapterAudit: { ...auditConfig.chapterAudit, maxTotalIssues: Number(e.target.value) }
+                          })}
+                          min="0"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
                     </div>
                   </div>
-                  <h4 className="text-xs font-bold text-muted-foreground mb-2 mt-4">分值计算规则</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">Critical 扣分权重</div>
-                      <input
-                        type="number"
-                        value={auditConfig.passCriteria?.scoringRules?.criticalIssueWeight ?? 3}
-                        onChange={(e) => {
-                          setAuditConfig({
+
+                  <div>
+                    <h3 className="text-sm font-bold mb-3">分值计算规则</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">Critical 扣分权重</label>
+                        <input
+                          type="number"
+                          value={auditConfig.chapterAudit?.scoring?.criticalIssueWeight ?? 5}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            passCriteria: {
-                              ...auditConfig.passCriteria,
-                              scoringRules: {
-                                ...auditConfig.passCriteria?.scoringRules,
-                                criticalIssueWeight: Number(e.target.value)
-                              }
+                            chapterAudit: {
+                              ...auditConfig.chapterAudit,
+                              scoring: { ...auditConfig.chapterAudit?.scoring, criticalIssueWeight: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        step="0.5"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">Warning 扣分权重</div>
-                      <input
-                        type="number"
-                        value={auditConfig.passCriteria?.scoringRules?.warningIssueWeight ?? 1}
-                        onChange={(e) => {
-                          setAuditConfig({
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">Warning 扣分权重</label>
+                        <input
+                          type="number"
+                          value={auditConfig.chapterAudit?.scoring?.warningIssueWeight ?? 2}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            passCriteria: {
-                              ...auditConfig.passCriteria,
-                              scoringRules: {
-                                ...auditConfig.passCriteria?.scoringRules,
-                                warningIssueWeight: Number(e.target.value)
-                              }
+                            chapterAudit: {
+                              ...auditConfig.chapterAudit,
+                              scoring: { ...auditConfig.chapterAudit?.scoring, warningIssueWeight: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        step="0.5"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">Info 扣分权重</div>
-                      <input
-                        type="number"
-                        value={auditConfig.passCriteria?.scoringRules?.infoIssueWeight ?? 0.5}
-                        onChange={(e) => {
-                          setAuditConfig({
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">Info 扣分权重</label>
+                        <input
+                          type="number"
+                          value={auditConfig.chapterAudit?.scoring?.infoIssueWeight ?? 0.5}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            passCriteria: {
-                              ...auditConfig.passCriteria,
-                              scoringRules: {
-                                ...auditConfig.passCriteria?.scoringRules,
-                                infoIssueWeight: Number(e.target.value)
-                              }
+                            chapterAudit: {
+                              ...auditConfig.chapterAudit,
+                              scoring: { ...auditConfig.chapterAudit?.scoring, infoIssueWeight: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        step="0.5"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">最低通过分数</div>
-                      <input
-                        type="number"
-                        value={auditConfig.passCriteria?.scoringRules?.minPassScore ?? 60}
-                        onChange={(e) => {
-                          setAuditConfig({
-                            ...auditConfig,
-                            passCriteria: {
-                              ...auditConfig.passCriteria,
-                              scoringRules: {
-                                ...auditConfig.passCriteria?.scoringRules,
-                                minPassScore: Number(e.target.value)
-                              }
-                            }
-                          });
-                        }}
-                        min="0"
-                        max="100"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
 
               {activeAuditTab === "foundation" && (
-                <div className="space-y-4">
-                  <h3 className="text-sm font-bold mb-3">基础审核（大纲审核）通过标准</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <h4 className="text-xs font-bold text-muted-foreground mb-2">总分通过阈值</h4>
-                      <input
-                        type="number"
-                        value={auditConfig.foundationReview?.passThreshold ?? 80}
-                        onChange={(e) => {
-                          setAuditConfig({
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-sm font-bold mb-3">基础审核（大纲审核）通过标准</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">总分通过阈值</label>
+                        <input
+                          type="number"
+                          value={auditConfig.foundationReview?.passThreshold ?? 80}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
-                            foundationReview: {
-                              ...auditConfig.foundationReview,
-                              passThreshold: Number(e.target.value)
-                            }
-                          });
-                        }}
-                        min="0"
-                        max="100"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
+                            foundationReview: { ...auditConfig.foundationReview, passThreshold: Number(e.target.value) }
+                          })}
+                          min="0"
+                          max="100"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">单个维度最低分</label>
+                        <input
+                          type="number"
+                          value={auditConfig.foundationReview?.dimensionFloor ?? 60}
+                          onChange={(e) => setAuditConfig({
+                            ...auditConfig,
+                            foundationReview: { ...auditConfig.foundationReview, dimensionFloor: Number(e.target.value) }
+                          })}
+                          min="0"
+                          max="100"
+                          className="w-full px-3 py-2 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
                     </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <h4 className="text-xs font-bold text-muted-foreground mb-2">单个维度最低分</h4>
-                      <input
-                        type="number"
-                        value={auditConfig.foundationReview?.dimensionFloor ?? 60}
-                        onChange={(e) => {
-                          setAuditConfig({
+                    <h4 className="text-xs font-bold text-muted-foreground mb-2 mt-4">各维度权重</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div className="p-3 rounded-lg border border-border/50">
+                        <div className="text-xs text-muted-foreground mb-1">核心冲突</div>
+                        <input
+                          type="number"
+                          value={auditConfig.foundationReview?.weights?.coreConflict ?? 1}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
                             foundationReview: {
                               ...auditConfig.foundationReview,
-                              dimensionFloor: Number(e.target.value)
+                              weights: { ...auditConfig.foundationReview?.weights, coreConflict: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        max="100"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                  </div>
-                  <h4 className="text-xs font-bold text-muted-foreground mb-2 mt-4">各维度权重</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">核心冲突</div>
-                      <input
-                        type="number"
-                        value={auditConfig.foundationReview?.weights?.coreConflict ?? 1}
-                        onChange={(e) => {
-                          setAuditConfig({
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div className="p-3 rounded-lg border border-border/50">
+                        <div className="text-xs text-muted-foreground mb-1">开篇节奏</div>
+                        <input
+                          type="number"
+                          value={auditConfig.foundationReview?.weights?.openingMomentum ?? 1}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
                             foundationReview: {
                               ...auditConfig.foundationReview,
-                              weights: {
-                                ...auditConfig.foundationReview?.weights,
-                                coreConflict: Number(e.target.value)
-                              }
+                              weights: { ...auditConfig.foundationReview?.weights, openingMomentum: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        step="0.1"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">开篇节奏</div>
-                      <input
-                        type="number"
-                        value={auditConfig.foundationReview?.weights?.openingMomentum ?? 1}
-                        onChange={(e) => {
-                          setAuditConfig({
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div className="p-3 rounded-lg border border-border/50">
+                        <div className="text-xs text-muted-foreground mb-1">世界一致性</div>
+                        <input
+                          type="number"
+                          value={auditConfig.foundationReview?.weights?.worldConsistency ?? 1}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
                             foundationReview: {
                               ...auditConfig.foundationReview,
-                              weights: {
-                                ...auditConfig.foundationReview?.weights,
-                                openingMomentum: Number(e.target.value)
-                              }
+                              weights: { ...auditConfig.foundationReview?.weights, worldConsistency: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        step="0.1"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">世界一致性</div>
-                      <input
-                        type="number"
-                        value={auditConfig.foundationReview?.weights?.worldCoherence ?? 1}
-                        onChange={(e) => {
-                          setAuditConfig({
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div className="p-3 rounded-lg border border-border/50">
+                        <div className="text-xs text-muted-foreground mb-1">角色区分度</div>
+                        <input
+                          type="number"
+                          value={auditConfig.foundationReview?.weights?.characterDifferentiation ?? 1}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
                             foundationReview: {
                               ...auditConfig.foundationReview,
-                              weights: {
-                                ...auditConfig.foundationReview?.weights,
-                                worldCoherence: Number(e.target.value)
-                              }
+                              weights: { ...auditConfig.foundationReview?.weights, characterDifferentiation: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        step="0.1"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">角色区分度</div>
-                      <input
-                        type="number"
-                        value={auditConfig.foundationReview?.weights?.characterDifferentiation ?? 1}
-                        onChange={(e) => {
-                          setAuditConfig({
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
+                      <div className="p-3 rounded-lg border border-border/50">
+                        <div className="text-xs text-muted-foreground mb-1">节奏可行性</div>
+                        <input
+                          type="number"
+                          value={auditConfig.foundationReview?.weights?.pacingFeasibility ?? 1}
+                          onChange={(e) => setAuditConfig({
                             ...auditConfig,
                             foundationReview: {
                               ...auditConfig.foundationReview,
-                              weights: {
-                                ...auditConfig.foundationReview?.weights,
-                                characterDifferentiation: Number(e.target.value)
-                              }
+                              weights: { ...auditConfig.foundationReview?.weights, pacingFeasibility: Number(e.target.value) }
                             }
-                          });
-                        }}
-                        min="0"
-                        step="0.1"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
-                    </div>
-                    <div className="p-3 rounded-lg border border-border/50">
-                      <div className="text-xs text-muted-foreground mb-1">节奏可行性</div>
-                      <input
-                        type="number"
-                        value={auditConfig.foundationReview?.weights?.pacingFeasibility ?? 1}
-                        onChange={(e) => {
-                          setAuditConfig({
-                            ...auditConfig,
-                            foundationReview: {
-                              ...auditConfig.foundationReview,
-                              weights: {
-                                ...auditConfig.foundationReview?.weights,
-                                pacingFeasibility: Number(e.target.value)
-                              }
-                            }
-                          });
-                        }}
-                        min="0"
-                        step="0.1"
-                        className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
-                      />
+                          })}
+                          min="0"
+                          step="0.1"
+                          className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1562,6 +1441,123 @@ export function BookDetail({
               >
                 {savingAuditConfig ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Save size={14} />}
                 {savingAuditConfig ? "保存中" : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Outline Regenerate Modal */}
+      {showOutlineRegenerate && (
+        <div className="fixed inset-0 flex items-start justify-center z-[100] pt-20">
+          <div className="bg-card rounded-2xl shadow-xl max-w-2xl w-full mx-4 flex flex-col" style={{ height: 'clamp(400px, 80vh, 800px)' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-border/50 shrink-0">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Wand2 size={20} className="text-primary" />
+                重新生成大纲
+              </h2>
+              <button
+                onClick={() => setShowOutlineRegenerate(false)}
+                className="p-2 rounded-lg hover:bg-primary/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+              {/* Genre Selection */}
+              <div>
+                <label className="block text-sm font-medium mb-2">书籍题材 <span className="text-destructive">*</span></label>
+                <div className="grid grid-cols-3 gap-2">
+                  {genreData?.genres?.filter((g: GenreInfo) => g.language === (book.language ?? "zh") || g.source === "project").map((g: GenreInfo) => (
+                    <button
+                      key={g.id}
+                      onClick={() => setOutlineGenre(g.id)}
+                      className={`px-3 py-2.5 rounded-md text-sm text-left transition-all ${
+                        outlineGenre === g.id
+                          ? "bg-primary/15 text-primary border border-primary/30 font-medium"
+                          : "bg-secondary text-secondary-foreground border border-transparent hover:border-border"
+                      }`}
+                    >
+                      {g.name}
+                      {g.source === "project" && <span className="text-xs text-muted-foreground ml-1">✦</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Brief File Upload */}
+              <div>
+                <label className="block text-sm font-medium mb-2">创作简报（可选）</label>
+                <div className="flex items-center gap-3 p-3 border border-border/50 rounded-md bg-secondary/30">
+                  <label className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary rounded-md hover:bg-primary/20 cursor-pointer transition-colors">
+                    <input
+                      type="file"
+                      accept=".txt,.md"
+                      onChange={handleOutlineFileChange}
+                      className="hidden"
+                    />
+                    <span className="text-lg">📁</span>
+                    <span>上传简报文件</span>
+                  </label>
+                  {outlineFileName && (
+                    <span className="text-sm text-muted-foreground truncate max-w-[200px]">
+                      {outlineFileName}
+                    </span>
+                  )}
+                  <span className="text-xs text-muted-foreground ml-auto">支持 .txt, .md</span>
+                </div>
+              </div>
+
+              {/* Brief Text Input */}
+              <div>
+                <label className="block text-sm font-medium mb-2">大纲设定（可选）</label>
+                <div className="relative">
+                  <textarea
+                    value={outlineBrief}
+                    onChange={(e) => {
+                      setOutlineBrief(e.target.value);
+                      setOutlineFileName("");
+                    }}
+                    placeholder="在此输入大纲设定、创作方向、核心设定等内容...&#10;&#10;这些信息将帮助 Architect 更好地理解你的创作意图，生成符合预期的大纲。"
+                    className={`w-full ${c.input} rounded-md px-4 py-3 focus:outline-none min-h-[200px] resize-y`}
+                  />
+                  {outlineBrief && (
+                    <button
+                      onClick={() => {
+                        setOutlineBrief("");
+                        setOutlineFileName("");
+                      }}
+                      className="absolute top-2 right-2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                      title="清除内容"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  💡 提示：上传文件与手动输入二选一，优先使用文件内容。设定越详细，生成的大纲越符合预期。
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end p-6 border-t border-border/50 shrink-0 bg-card rounded-b-2xl">
+              <button
+                onClick={() => setShowOutlineRegenerate(false)}
+                className="px-4 py-2 text-sm font-bold bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-all border border-border/50 mr-2"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleRegenerateOutline}
+                disabled={regeneratingOutline || !outlineGenre}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+              >
+                {regeneratingOutline ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Wand2 size={14} />}
+                {regeneratingOutline ? "生成中..." : "开始生成"}
               </button>
             </div>
           </div>

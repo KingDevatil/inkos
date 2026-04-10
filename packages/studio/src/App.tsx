@@ -218,8 +218,9 @@ export function App() {
       {/* Help Modal */}
       {showHelp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-y-auto">
-            <div className="p-6 border-b border-border/50">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] flex flex-col">
+            {/* Fixed Header */}
+            <div className="p-6 border-b border-border/50 shrink-0">
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold flex items-center gap-2">
                   <HelpCircle size={20} className="text-primary" />
@@ -236,7 +237,8 @@ export function App() {
                 </button>
               </div>
             </div>
-            <div className="p-6 space-y-6">
+            {/* Scrollable Content */}
+            <div className="p-6 space-y-6 overflow-y-auto flex-1">
               <section>
                 <h3 className="text-lg font-semibold mb-3">{t("dash.helpBookStatus")}</h3>
                 <ul className="space-y-2 text-sm text-muted-foreground">
@@ -261,6 +263,77 @@ export function App() {
                     <span><strong>{t("book.statusDropped")}</strong> - {t("dash.helpStatusDropped")}</span>
                   </li>
                 </ul>
+              </section>
+
+              <section>
+                <h3 className="text-lg font-semibold mb-3">章节状态说明</h3>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="p-2 rounded bg-slate-100 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-slate-500" />
+                    <span className="text-slate-700">card-generated</span>
+                    <span className="text-slate-500 ml-auto">卡片已生成</span>
+                  </div>
+                  <div className="p-2 rounded bg-blue-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span className="text-blue-600">drafting</span>
+                    <span className="text-blue-500 ml-auto">创作中</span>
+                  </div>
+                  <div className="p-2 rounded bg-blue-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span className="text-blue-600">drafted</span>
+                    <span className="text-blue-500 ml-auto">已创作</span>
+                  </div>
+                  <div className="p-2 rounded bg-purple-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-purple-500" />
+                    <span className="text-purple-600">auditing</span>
+                    <span className="text-purple-500 ml-auto">审核中</span>
+                  </div>
+                  <div className="p-2 rounded bg-emerald-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-emerald-600">audit-passed</span>
+                    <span className="text-emerald-500 ml-auto">审核通过</span>
+                  </div>
+                  <div className="p-2 rounded bg-red-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    <span className="text-red-600">audit-failed</span>
+                    <span className="text-red-500 ml-auto">审核失败</span>
+                  </div>
+                  <div className="p-2 rounded bg-amber-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span className="text-amber-600">state-degraded</span>
+                    <span className="text-amber-500 ml-auto">状态降级</span>
+                  </div>
+                  <div className="p-2 rounded bg-orange-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-orange-500" />
+                    <span className="text-orange-600">revising</span>
+                    <span className="text-orange-500 ml-auto">修订中</span>
+                  </div>
+                  <div className="p-2 rounded bg-yellow-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500" />
+                    <span className="text-yellow-600">ready-for-review</span>
+                    <span className="text-yellow-500 ml-auto">待审核</span>
+                  </div>
+                  <div className="p-2 rounded bg-teal-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-teal-500" />
+                    <span className="text-teal-600">approved</span>
+                    <span className="text-teal-500 ml-auto">已批准</span>
+                  </div>
+                  <div className="p-2 rounded bg-rose-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span className="text-rose-600">rejected</span>
+                    <span className="text-rose-500 ml-auto">已拒绝</span>
+                  </div>
+                  <div className="p-2 rounded bg-indigo-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                    <span className="text-indigo-600">published</span>
+                    <span className="text-indigo-500 ml-auto">已发布</span>
+                  </div>
+                  <div className="p-2 rounded bg-gray-50 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-gray-500" />
+                    <span className="text-gray-600">imported</span>
+                    <span className="text-gray-500 ml-auto">已导入</span>
+                  </div>
+                </div>
               </section>
 
               <section>

@@ -1541,6 +1541,39 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json(checks);
   });
 
+  // --- Regenerate Outline ---
+  app.post("/api/books/:id/regenerate-outline", async (c) => {
+    const id = c.req.param("id");
+    const { genre, brief } = await c.req.json<{ genre?: string; brief?: string }>();
+
+    if (!genre) {
+      return c.json({ error: "genre is required" }, 400);
+    }
+
+    broadcast("outline:regenerate:start", { bookId: id, genre });
+    try {
+      const book = await state.loadBookConfig(id);
+      const now = new Date().toISOString();
+
+      const updatedBook = {
+        ...book,
+        genre,
+        updatedAt: now,
+      };
+
+      await state.saveBookConfig(id, updatedBook);
+
+      const pipeline = new PipelineRunner(await buildPipelineConfig({ externalContext: brief }));
+      await pipeline.regenerateFoundation(updatedBook, brief);
+
+      broadcast("outline:regenerate:complete", { bookId: id });
+      return c.json({ ok: true, bookId: id });
+    } catch (e) {
+      broadcast("outline:regenerate:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   return app;
 }
 
