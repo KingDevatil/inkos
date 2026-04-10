@@ -16,6 +16,7 @@ import {
 import { applySpotFixPatches, parseSpotFixPatches } from "../utils/spot-fix-patches.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { RAGManager } from "../rag/rag-manager.js";
 
 export type ReviseMode = "polish" | "rewrite" | "rework" | "anti-detect" | "spot-fix";
 
@@ -32,6 +33,14 @@ export interface ReviseOutput {
     readonly promptTokens: number;
     readonly completionTokens: number;
     readonly totalTokens: number;
+  };
+  readonly ragContext?: {
+    readonly retrievedContent: ReadonlyArray<{
+      id: string;
+      content: string;
+      score: number;
+      metadata: Record<string, unknown>;
+    }>;
   };
 }
 
@@ -71,6 +80,7 @@ export class ReviserAgent extends BaseAgent {
       contextPackage?: ContextPackage;
       ruleStack?: RuleStack;
       lengthSpec?: LengthSpec;
+      ragManager?: RAGManager;
     },
   ): Promise<ReviseOutput> {
     const [currentState, ledger, hooks, styleGuideRaw, volumeOutline, storyBible, characterMatrix, chapterSummaries, parentCanon, fanficCanon] = await Promise.all([
@@ -103,6 +113,17 @@ export class ReviserAgent extends BaseAgent {
     const issueList = issues
       .map((i) => `- [${i.severity}] ${i.category}: ${i.description}\n  建议: ${i.suggestion}`)
       .join("\n");
+
+    // 使用RAG系统检索相关内容
+    let ragContext: ReviseOutput["ragContext"];
+    if (options?.ragManager) {
+      const query = `修订第${chapterNumber}章，解决以下问题：${issues.map(i => i.description).join("；")}`;
+      const retrievedContent = await options.ragManager.retrieveRelevantContent(query, {
+        limit: 5,
+        chapterNumber,
+      });
+      ragContext = { retrievedContent };
+    }
 
     const modeDesc = MODE_DESCRIPTIONS[mode];
     const numericalRule = gp.numericalSystem

@@ -492,6 +492,9 @@ export class PipelineRunner {
       }
 
       await rename(stagingBookDir, bookDir);
+      
+      // 索引基础设定文件到RAG系统
+      await this.indexBookFoundationToRAG(book.id);
     } catch (error) {
       await rm(stagingBookDir, { recursive: true, force: true }).catch(() => undefined);
       throw error;
@@ -542,6 +545,9 @@ export class PipelineRunner {
     const chapterIndex = await this.state.loadChapterIndex(book.id);
     const currentChapter = chapterIndex.length > 0 ? chapterIndex[chapterIndex.length - 1].number : 0;
     await this.state.snapshotStateAt(bookDir, currentChapter);
+    
+    // 索引基础设定文件到RAG系统
+    await this.indexBookFoundationToRAG(book.id);
   }
 
   /** Import external source material and generate fanfic_canon.md */
@@ -620,6 +626,9 @@ export class PipelineRunner {
     await mkdir(join(bookDir, "chapters"), { recursive: true });
     await this.state.saveChapterIndex(book.id, []);
     await this.state.snapshotState(book.id, 0);
+    
+    // 索引基础设定文件到RAG系统
+    await this.indexBookFoundationToRAG(book.id);
   }
 
   /** Write a single draft chapter. Saves chapter file + truth files + index + snapshot. */
@@ -632,6 +641,10 @@ export class PipelineRunner {
       const chapterNumber = await this.state.getNextChapterNumber(bookId);
       const stageLanguage = await this.resolveBookLanguage(book);
       this.logStage(stageLanguage, { zh: "准备章节输入", en: "preparing chapter inputs" });
+      
+      // 索引记忆到RAG系统
+      await this.indexMemoryToRAG(bookId);
+      
       const writeInput = await this.prepareWriteInput(
         book,
         bookDir,
@@ -813,6 +826,9 @@ export class PipelineRunner {
       throw new Error(`No chapters to audit for "${bookId}"`);
     }
 
+    // 索引记忆到RAG系统
+    await this.indexMemoryToRAG(bookId);
+
     const content = await this.readChapterContent(bookDir, targetChapter);
     const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
     const { profile: gp } = await this.loadGenreProfile(book.genre);
@@ -898,6 +914,9 @@ export class PipelineRunner {
         throw new Error(`Chapter ${targetChapter} not found in index`);
       }
 
+      // 索引记忆到RAG系统
+      await this.indexMemoryToRAG(bookId);
+      
       // Re-audit to get structured issues (index only stores strings)
       const content = await this.readChapterContent(bookDir, targetChapter);
       const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
@@ -954,6 +973,10 @@ export class PipelineRunner {
         zh: `修订第${targetChapter}章`,
         en: `revising chapter ${targetChapter}`,
       });
+      
+      // 获取RAG管理器
+      const ragManager = await this.getRAGManager(bookId);
+      
       const reviseOutput = await reviser.reviseChapter(
         bookDir,
         content,
@@ -967,8 +990,12 @@ export class PipelineRunner {
               contextPackage: reviseControlInput.composed.contextPackage,
               ruleStack: reviseControlInput.composed.ruleStack,
               lengthSpec,
+              ragManager: ragManager || undefined,
             }
-          : { lengthSpec },
+          : {
+              lengthSpec,
+              ragManager: ragManager || undefined,
+            },
       );
 
       if (reviseOutput.revisedContent.length === 0) {
