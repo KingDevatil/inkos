@@ -59,6 +59,33 @@ pnpm build
 pnpm link --global
 ```
 
+**方法三：Docker 部署（推荐用于服务器部署）**
+
+```bash
+# 克隆本仓库
+git clone https://github.com/KingDevatil/inkos.git
+cd inkos
+
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件，设置你的 API Key
+
+# 启动服务
+docker-compose -f docker-compose.hybrid.yml up -d
+
+# 访问 InkOS Studio
+# Web UI: http://localhost
+# Agent API: http://localhost/api/agent
+```
+
+**Docker 部署特点：**
+- 同时支持 Web UI 访问和 Agent API 调用
+- 数据持久化存储（书籍、配置、日志）
+- Nginx 反向代理，统一入口
+- 支持 HTTPS（需配置 SSL 证书）
+
+详细 Docker 部署文档请参考 [DOCKER_HYBRID_DEPLOY.md](DOCKER_HYBRID_DEPLOY.md)
+
 **通过 npm 安装（仅获取原版，不含本仓库的修改）**
 
 ```bash
