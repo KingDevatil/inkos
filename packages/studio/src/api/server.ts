@@ -193,6 +193,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           maxParagraphLength: number;
         };
       };
+      brief?: string;
     }>();
 
     const now = new Date().toISOString();
@@ -211,7 +212,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     broadcast("book:creating", { bookId, title: body.title });
     bookCreateStatus.set(bookId, { status: "creating" });
 
-    const pipeline = new PipelineRunner(await buildPipelineConfig());
+    const pipeline = new PipelineRunner(await buildPipelineConfig({ externalContext: body.brief }));
     pipeline.initBook(bookConfig).then(
       async () => {
         // Save audit config if not using global config

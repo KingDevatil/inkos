@@ -130,7 +130,25 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const [showAuditConfigForm, setShowAuditConfigForm] = useState(false);
   const [auditConfig, setAuditConfig] = useState<any>(null);
   const [loadingAuditConfig, setLoadingAuditConfig] = useState(false);
-  const [activeAuditTab, setActiveAuditTab] = useState<"dimensions" | "validation" | "chapter" | "foundation">("dimensions");
+  const [activeAuditTab, setActiveAuditTab] = useState<"dimensions" | "validation" | "chapter" | "foundation" | "help">("dimensions");
+  const [briefContent, setBriefContent] = useState("");
+  const [briefFileName, setBriefFileName] = useState("");
+
+  const handleBriefFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext !== "txt" && ext !== "md") {
+      setError("仅支持 .txt 和 .md 格式的简报文件");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setBriefContent(event.target?.result as string || "");
+      setBriefFileName(file.name);
+    };
+    reader.readAsText(file);
+  };
 
   // Filter genres by project language + custom genres (always show)
   const allGenres = genreData?.genres ?? [];
@@ -187,6 +205,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
         targetChapters: parseInt(targetChapters, 10),
         useGlobalAuditConfig,
         auditConfig: useGlobalAuditConfig ? undefined : auditConfig,
+        brief: briefContent || undefined,
       });
       await waitForBookReady(result.bookId);
       nav.toBook(result.bookId);
@@ -294,13 +313,74 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
           </div>
         </div>
 
+        {/* Creative Brief */}
+        <div>
+          <label className="block text-sm text-muted-foreground mb-2">创作简报</label>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 p-3 border border-border/50 rounded-md bg-secondary/30">
+              <label className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary rounded-md hover:bg-primary/20 cursor-pointer transition-colors">
+                <input
+                  type="file"
+                  accept=".txt,.md"
+                  onChange={handleBriefFileChange}
+                  className="hidden"
+                />
+                <span className="text-lg">📁</span>
+                <span>上传简报文件</span>
+              </label>
+              {briefFileName && (
+                <span className="text-sm text-muted-foreground truncate max-w-[200px]">
+                  {briefFileName}
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground ml-auto">支持 .txt, .md</span>
+            </div>
+            <div className="relative">
+              <textarea
+                value={briefContent}
+                onChange={(e) => {
+                  setBriefContent(e.target.value);
+                  setBriefFileName("");
+                }}
+                placeholder="或者直接在此输入创作简报内容...&#10;&#10;简报将帮助 Architect 理解你的创作想法，基于你的设定构建大纲，而非从头生成。"
+                className={`w-full ${c.input} rounded-md px-4 py-3 focus:outline-none min-h-[120px] resize-y`}
+              />
+              {briefContent && (
+                <button
+                  onClick={() => {
+                    setBriefContent("");
+                    setBriefFileName("");
+                  }}
+                  className="absolute top-2 right-2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                  title="清除内容"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground flex items-start gap-1">
+              <span className="mt-0.5">💡</span>
+              <span>简报内容会作为创作方向参考，Architect 会根据你的设定构建大纲。上传文件与手动输入二选一，优先使用文件内容。</span>
+            </div>
+          </div>
+        </div>
+
         {/* Audit Config */}
         <div>
           <label className="block text-sm text-muted-foreground mb-2">审计配置</label>
-          <div className="flex items-center justify-between p-4 border border-border/50 rounded-md bg-secondary/30">
+          <div className="flex items-start justify-between p-4 border border-border/50 rounded-md bg-secondary/30">
             <div>
               <div className="font-medium">使用全局默认配置</div>
               <div className="text-xs text-muted-foreground">如果选择否，将展开配置页面设置项目级审计配置</div>
+              {!useGlobalAuditConfig && (
+                <button
+                  onClick={loadDefaultAuditConfig}
+                  disabled={loadingAuditConfig}
+                  className="mt-2 text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  {loadingAuditConfig ? "加载中..." : "打开审计设置"}
+                </button>
+              )}
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -333,7 +413,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
       {/* Audit Config Modal */}
       {showAuditConfigForm && auditConfig && (
         <div className="fixed inset-0 flex items-center justify-center z-[100] p-4">
-          <div className="bg-card rounded-2xl shadow-2xl max-w-4xl w-full flex flex-col border border-border" style={{ height: 'clamp(400px, 80vh, 600px)' }}>
+          <div className="bg-card rounded-2xl shadow-2xl max-w-4xl w-full flex flex-col border border-border" style={{ height: 'clamp(400px, 80vh, 1200px)' }}>
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-border/50 shrink-0">
               <h2 className="text-xl font-bold">审计配置</h2>
@@ -386,6 +466,16 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
                 }`}
               >
                 基础审核标准
+              </button>
+              <button
+                onClick={() => setActiveAuditTab("help")}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeAuditTab === "help"
+                    ? "bg-primary/10 text-primary border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                配置说明
               </button>
             </div>
 
@@ -927,6 +1017,88 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
                         className="w-full px-2 py-1 text-sm rounded border border-border/50 bg-secondary/30"
                       />
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {activeAuditTab === "help" && (
+                <div className="space-y-6 text-sm">
+                  <div>
+                    <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-primary"></span>
+                      审计维度权重
+                    </h3>
+                    <p className="text-muted-foreground mb-2">影响该维度在 AI 审核时的重要性提示。</p>
+                    <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                      <li><strong>权重 = 1.0</strong>：正常审核该维度</li>
+                      <li><strong>权重 &gt; 1.0</strong>：AI 会更加关注该维度的问题（如 1.5、2.0）</li>
+                      <li><strong>权重 &lt; 1.0</strong>：AI 会相对放宽该维度的检查（如 0.5）</li>
+                    </ul>
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                      Critical / Warning / Info 分类
+                    </h3>
+                    <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                      <li><strong className="text-red-500">Critical</strong>：严重问题，直接影响内容质量，必须修复</li>
+                      <li><strong className="text-yellow-500">Warning</strong>：警告问题，影响阅读体验，建议修复</li>
+                      <li><strong className="text-blue-500">Info</strong>：提示问题，轻微影响，可选修复</li>
+                    </ul>
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      章节审计通过标准
+                    </h3>
+                    <p className="text-muted-foreground mb-2">章节审核必须同时满足以下条件才算通过：</p>
+                    <ol className="list-decimal list-inside space-y-1 text-muted-foreground ml-2">
+                      <li>Critical 问题数 ≤ 设定的最大值</li>
+                      <li>Warning 问题数 ≤ 设定的最大值</li>
+                      <li>总问题数 ≤ 设定的最大值</li>
+                      <li><strong>加权评分 ≥ 最低通过分数</strong></li>
+                    </ol>
+                    <div className="mt-2 p-3 bg-secondary/30 rounded-lg text-xs">
+                      <strong>加权评分计算公式：</strong><br/>
+                      分数 = 100 - (Critical数 × Critical权重) - (Warning数 × Warning权重) - (Info数 × Info权重)
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                      基础审核（大纲审核）标准
+                    </h3>
+                    <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                      <li><strong>总分通过阈值</strong>：大纲审核的总分必须达到此分数才算通过（默认80）</li>
+                      <li><strong>单个维度最低分</strong>：每个维度的得分不能低于此分数（默认60）</li>
+                      <li><strong>各维度权重</strong>：影响该维度在总分计算中的占比</li>
+                    </ul>
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                      验证规则
+                    </h3>
+                    <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                      <li><strong>禁止句式</strong>：检测并标记特定的句式模式</li>
+                      <li><strong>禁止破折号</strong>：是否允许使用破折号</li>
+                      <li><strong>转折词密度</strong>：控制"但是"、"然而"等转折词的使用频率</li>
+                      <li><strong>对话密度</strong>：控制对话在章节中的占比</li>
+                    </ul>
+                  </div>
+
+                  <div className="p-4 bg-blue-50/50 border border-blue-200 rounded-lg">
+                    <h3 className="text-base font-bold mb-2 text-blue-700">配置建议</h3>
+                    <ul className="list-disc list-inside space-y-1 text-blue-600/80 text-xs ml-2">
+                      <li>严格审核：Critical 权重设为 3-5，minPassScore 设为 70-80</li>
+                      <li>宽松审核：Critical 权重设为 1-2，minPassScore 设为 50-60</li>
+                      <li>重点关注某维度：将该维度 weight 设为 1.5-2.0</li>
+                      <li>忽略某维度：将该维度 weight 设为 0.5 或直接禁用</li>
+                    </ul>
                   </div>
                 </div>
               )}
