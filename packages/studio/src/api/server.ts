@@ -19,6 +19,7 @@ import {
 import { access, readFile, writeFile, readdir, unlink, rename, mkdir } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
@@ -408,6 +409,127 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // --- Batch Operations ---
+
+  // Approve all ready-for-review chapters
+  app.post("/api/books/:id/approve-all", async (c) => {
+    const id = c.req.param("id");
+
+    try {
+      const index = await state.loadChapterIndex(id);
+      const reviewable = index.filter((ch) => ch.status === "ready-for-review");
+
+      const results = [];
+      const updatedIndex = [...index];
+
+      for (const ch of reviewable) {
+        try {
+          // Update chapter status in index
+          const chapterIdx = updatedIndex.findIndex((item) => item.number === ch.number);
+          if (chapterIdx !== -1) {
+            updatedIndex[chapterIdx] = { ...updatedIndex[chapterIdx], status: "approved" as const };
+          }
+          results.push({ chapterNumber: ch.number, status: "approved" });
+        } catch (e) {
+          results.push({ chapterNumber: ch.number, status: "error", error: String(e) });
+        }
+      }
+
+      // Save updated index
+      await state.saveChapterIndex(id, updatedIndex);
+
+      broadcast("book:approve-all", { bookId: id, count: reviewable.length });
+      return c.json({
+        ok: true,
+        approved: results.filter((r) => r.status === "approved").length,
+        failed: results.filter((r) => r.status === "error").length,
+        results,
+      });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Repair book state
+  app.post("/api/books/:id/repair-state", async (c) => {
+    const id = c.req.param("id");
+
+    try {
+      const index = await state.loadChapterIndex(id);
+      const repairs = [];
+
+      // Fix 1: Ensure chapter numbers are sequential
+      const sortedIndex = [...index].sort((a, b) => a.number - b.number);
+      for (let i = 0; i < sortedIndex.length; i++) {
+        const expectedNumber = i + 1;
+        if (sortedIndex[i].number !== expectedNumber) {
+          repairs.push({
+            type: "renumber",
+            oldNumber: sortedIndex[i].number,
+            newNumber: expectedNumber,
+          });
+        }
+      }
+
+      // Fix 2: Validate chapter files exist
+      const bookDir = state.bookDir(id);
+      const chaptersDir = join(bookDir, "chapters");
+      const existingFiles = await readdir(chaptersDir).catch(() => [] as string[]);
+
+      for (const ch of index) {
+        const paddedNum = String(ch.number).padStart(4, "0");
+        const chapterFile = existingFiles.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+        if (!chapterFile) {
+          // File doesn't exist, mark as orphaned
+          repairs.push({
+            type: "orphaned",
+            chapterNumber: ch.number,
+            status: ch.status,
+          });
+        }
+      }
+
+      // Fix 3: Rebuild chapter index from actual files if needed
+      if (repairs.length > 0) {
+        const validChapters = [];
+        for (const file of existingFiles.sort()) {
+          const match = file.match(/^(\d{4})[-_](.*)\.md$/);
+          if (!match) continue;
+
+          const num = parseInt(match[1], 10);
+          const title = match[2].replace(/-/g, " ");
+
+          // Find existing chapter metadata if available
+          const existing = index.find((ch) => ch.number === num);
+
+          validChapters.push({
+            number: num,
+            title: existing?.title ?? title,
+            status: existing?.status ?? "drafted",
+            wordCount: existing?.wordCount ?? 0,
+            createdAt: existing?.createdAt ?? new Date().toISOString(),
+            updatedAt: existing?.updatedAt ?? new Date().toISOString(),
+            auditIssues: existing?.auditIssues ?? [],
+            lengthWarnings: existing?.lengthWarnings ?? [],
+          });
+        }
+
+        // Sort by chapter number
+        validChapters.sort((a, b) => a.number - b.number);
+        await state.saveChapterIndex(id, validChapters);
+      }
+
+      broadcast("book:repair-state", { bookId: id, repairs: repairs.length });
+      return c.json({
+        ok: true,
+        repairs,
+        repaired: repairs.length,
+      });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   // --- SSE ---
 
   app.get("/api/events", (c) => {
@@ -476,6 +598,68 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       }
       const { writeFile: writeFileFs } = await import("node:fs/promises");
       await writeFileFs(configPath, JSON.stringify(existing, null, 2), "utf-8");
+      return c.json({ ok: true });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Global Config Management ---
+
+  app.get("/api/config/global", async (c) => {
+    try {
+      const globalConfigPath = join(homedir(), ".config", "inkos", "config.json");
+      try {
+        const raw = await readFile(globalConfigPath, "utf-8");
+        const config = JSON.parse(raw);
+        return c.json({ config });
+      } catch {
+        return c.json({ config: null, message: "Global config not found" });
+      }
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.put("/api/config/global", async (c) => {
+    try {
+      const updates = await c.req.json<Record<string, unknown>>();
+      const globalConfigDir = join(homedir(), ".config", "inkos");
+      const globalConfigPath = join(globalConfigDir, "config.json");
+
+      // Ensure directory exists
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(globalConfigDir, { recursive: true });
+
+      // Load existing or create new
+      let config: Record<string, unknown> = {};
+      try {
+        const raw = await readFile(globalConfigPath, "utf-8");
+        config = JSON.parse(raw);
+      } catch {
+        // File doesn't exist, use empty config
+      }
+
+      // Merge updates
+      const merged = { ...config, ...updates };
+
+      // Save
+      const { writeFile: writeFileFs } = await import("node:fs/promises");
+      await writeFileFs(globalConfigPath, JSON.stringify(merged, null, 2), "utf-8");
+
+      broadcast("config:global:updated", { keys: Object.keys(updates) });
+      return c.json({ ok: true, config: merged });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.delete("/api/config/global", async (c) => {
+    try {
+      const globalConfigPath = join(homedir(), ".config", "inkos", "config.json");
+      const { unlink } = await import("node:fs/promises");
+      await unlink(globalConfigPath);
+      broadcast("config:global:deleted", {});
       return c.json({ ok: true });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
@@ -839,6 +1023,82 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
+  });
+
+  // --- Batch Export ---
+
+  app.post("/api/batch/export", async (c) => {
+    const { bookIds, format, approvedOnly } = await c.req.json<{
+      bookIds?: string[];
+      format?: string;
+      approvedOnly?: boolean;
+    }>().catch(() => ({ bookIds: [], format: "txt", approvedOnly: false }));
+
+    if (!bookIds || bookIds.length === 0) {
+      return c.json({ error: "bookIds is required" }, 400);
+    }
+
+    const results = [];
+    const errors = [];
+
+    for (const id of bookIds) {
+      try {
+        const bookDir = state.bookDir(id);
+        const chaptersDir = join(bookDir, "chapters");
+        const fmt = format ?? "txt";
+
+        const book = await state.loadBookConfig(id);
+        const index = await state.loadChapterIndex(id);
+        const approvedNums = new Set(
+          approvedOnly ? index.filter((ch) => ch.status === "approved").map((ch) => ch.number) : [],
+        );
+
+        const files = await readdir(chaptersDir);
+        const mdFiles = files.filter((f) => f.endsWith(".md") && /^\d{4}/.test(f)).sort();
+        const filteredFiles = approvedOnly
+          ? mdFiles.filter((f) => approvedNums.has(parseInt(f.slice(0, 4), 10)))
+          : mdFiles;
+        const contents = await Promise.all(
+          filteredFiles.map((f) => readFile(join(chaptersDir, f), "utf-8")),
+        );
+
+        const { writeFile: writeFileFs } = await import("node:fs/promises");
+        let outputPath: string;
+        let body: string;
+
+        if (fmt === "md") {
+          body = contents.join("\n\n---\n\n");
+          outputPath = join(bookDir, `${id}.md`);
+        } else if (fmt === "epub") {
+          const chapters = contents.map((content, i) => {
+            const title = content.match(/^#\s+(.+)$/m)?.[1] ?? `Chapter ${i + 1}`;
+            const html = content.split("\n").filter((l) => !l.startsWith("#")).map((l) => l.trim() ? `<p>${l}</p>` : "").join("\n");
+            return { title, html };
+          });
+          const toc = chapters.map((ch, i) => `<li><a href="#ch${i}">${ch.title}</a></li>`).join("\n");
+          const chapterHtml = chapters.map((ch, i) => `<h2 id="ch${i}">${ch.title}</h2>\n${ch.html}`).join("\n<hr/>\n");
+          body = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${book.title}</title><style>body{font-family:serif;max-width:40em;margin:auto;padding:2em;line-height:1.8}h2{margin-top:3em}</style></head><body><h1>${book.title}</h1><nav><ol>${toc}</ol></nav><hr/>${chapterHtml}</body></html>`;
+          outputPath = join(bookDir, `${id}.html`);
+        } else {
+          body = contents.join("\n\n");
+          outputPath = join(bookDir, `${id}.txt`);
+        }
+
+        await writeFileFs(outputPath, body, "utf-8");
+        results.push({ bookId: id, ok: true, path: outputPath, format: fmt, chapters: filteredFiles.length });
+      } catch (e) {
+        errors.push({ bookId: id, error: String(e) });
+      }
+    }
+
+    broadcast("batch:export:complete", { exported: results.length, failed: errors.length });
+    return c.json({
+      ok: errors.length === 0,
+      exported: results.length,
+      failed: errors.length,
+      results,
+      errors,
+    });
   });
 
   // --- Genre detail + copy ---
@@ -1506,6 +1766,54 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       return c.json(result);
     } catch (e) {
       broadcast("radar:error", { error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Plan Chapter ---
+
+  app.post("/api/books/:id/plan", async (c) => {
+    const id = c.req.param("id");
+    const body: { context?: string } = await c.req
+      .json<{ context?: string }>()
+      .catch(() => ({ context: undefined }));
+
+    broadcast("plan:start", { bookId: id });
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig({
+        externalContext: body.context,
+      }));
+      const result = await pipeline.planChapter(id, body.context);
+      broadcast("plan:complete", { bookId: id, chapterNumber: result.chapterNumber });
+      return c.json(result);
+    } catch (e) {
+      broadcast("plan:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Consolidate ---
+
+  app.post("/api/books/:id/consolidate", async (c) => {
+    const id = c.req.param("id");
+
+    broadcast("consolidate:start", { bookId: id });
+    try {
+      const { ConsolidatorAgent } = await import("@actalk/inkos-core");
+      const currentConfig = await loadCurrentProjectConfig();
+      const consolidator = new ConsolidatorAgent({
+        client: createLLMClient(currentConfig.llm),
+        model: currentConfig.llm.model,
+        projectRoot: root,
+      });
+
+      const bookDir = state.bookDir(id);
+      const result = await consolidator.consolidate(bookDir);
+
+      broadcast("consolidate:complete", { bookId: id, archivedVolumes: result.archivedVolumes });
+      return c.json(result);
+    } catch (e) {
+      broadcast("consolidate:error", { bookId: id, error: String(e) });
       return c.json({ error: String(e) }, 500);
     }
   });
