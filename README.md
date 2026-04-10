@@ -74,15 +74,24 @@ cp .env.example .env
 docker-compose -f docker-compose.hybrid.yml up -d
 
 # 访问 InkOS Studio
-# Web UI: http://localhost
-# Agent API: http://localhost/api/agent
+# Web UI: http://localhost:8080
+# Agent API: http://localhost:8080/api/agent
 ```
 
 **Docker 部署特点：**
 - 同时支持 Web UI 访问和 Agent API 调用
 - 数据持久化存储（书籍、配置、日志）
-- Nginx 反向代理，统一入口
-- 支持 HTTPS（需配置 SSL 证书）
+- Nginx 反向代理，统一入口（端口 8080）
+- 支持 HTTPS（需配置 SSL 证书，端口 8443）
+- 避免使用 80/443 等常用端口，减少端口冲突
+
+**端口说明：**
+| 服务 | 端口 | 用途 |
+|------|------|------|
+| Nginx | 8080 | Web UI 和 API 入口 |
+| Nginx | 8443 | HTTPS（需配置 SSL） |
+| Studio | 3000 | 直接访问 Studio（调试用） |
+| Agent | 3001 | 直接访问 Agent API（调试用） |
 
 详细 Docker 部署文档请参考 [DOCKER_HYBRID_DEPLOY.md](DOCKER_HYBRID_DEPLOY.md)
 
