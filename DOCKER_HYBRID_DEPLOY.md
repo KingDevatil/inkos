@@ -50,9 +50,11 @@
 
 | 服务 | 端口 | 用途 | 访问方式 |
 |------|------|------|----------|
-| **nginx** | 80/443 | 统一入口 | http://localhost |
-| **inkos-studio** | 3000 | Web UI + API | 内部访问 |
-| **inkos-agent** | 3001 | Agent API | http://localhost:3001 |
+| **nginx** | 8080/8443 | 统一入口 | http://localhost:8080 |
+| **inkos-studio** | 3000 | Web UI + API | http://localhost:3000 (调试) |
+| **inkos-agent** | 3001 | Agent API | http://localhost:3001 (调试) |
+
+> **注意**：为避免与系统常用端口（80/443）冲突，Nginx 使用 8080 端口作为 HTTP 入口。如需修改端口，请编辑 `docker-compose.hybrid.yml` 文件。
 
 ---
 
@@ -88,14 +90,14 @@ docker-compose -f docker-compose.hybrid.yml logs -f
 ### 3. 验证部署
 
 ```bash
-# 检查 Web UI
-curl http://localhost
+# 检查 Web UI (通过 Nginx)
+curl http://localhost:8080
 
-# 检查 Agent API
+# 检查 Agent API (直接访问)
 curl http://localhost:3001/health
 
-# 检查 Studio API
-curl http://localhost/api/health
+# 检查 Studio API (通过 Nginx)
+curl http://localhost:8080/api/health
 ```
 
 ---
