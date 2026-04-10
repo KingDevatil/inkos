@@ -29,7 +29,10 @@ import type { AuditResult, AuditIssue } from "../agents/continuity.js";
 import type { RadarResult } from "../agents/radar.js";
 import type { LengthSpec, LengthTelemetry } from "../models/length-governance.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
+import type { VectorRetrievalConfig } from "../vector/types.js";
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, isOutsideSoftRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
+import { createRAGManager, type RAGManager } from "../rag/rag-manager.js";
+import type { MemorySelection } from "../utils/memory-retrieval.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
 import { rewriteStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
@@ -176,6 +179,7 @@ export class PipelineRunner {
   private readonly config: PipelineConfig;
   private readonly agentClients = new Map<string, LLMClient>();
   private memoryIndexFallbackWarned = false;
+  private ragManagers = new Map<string, RAGManager>();
 
   constructor(config: PipelineConfig) {
     this.config = config;
@@ -419,6 +423,105 @@ export class PipelineRunner {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private async getRAGManager(bookId: string): Promise<RAGManager | null> {
+    try {
+      const bookDir = this.state.bookDir(bookId);
+      const projectConfig = await this.state.loadProjectConfig();
+      const vectorRetrievalConfig = projectConfig.vectorRetrieval as VectorRetrievalConfig | undefined;
+      
+      if (!vectorRetrievalConfig || !vectorRetrievalConfig.enabled) {
+        return null;
+      }
+      
+      if (this.ragManagers.has(bookId)) {
+        return this.ragManagers.get(bookId)!;
+      }
+      
+      const ragManager = await createRAGManager({
+        bookDir,
+        config: vectorRetrievalConfig,
+        llmClient: this.config.client,
+      });
+      
+      if (ragManager.isAvailable()) {
+        this.ragManagers.set(bookId, ragManager);
+        return ragManager;
+      }
+      
+      return null;
+    } catch (error) {
+      this.config.logger?.warn(`Failed to initialize RAG manager: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  private async indexMemoryToRAG(bookId: string): Promise<void> {
+    try {
+      const ragManager = await this.getRAGManager(bookId);
+      if (!ragManager) return;
+      
+      const bookDir = this.state.bookDir(bookId);
+      const { retrieveMemorySelection } = await import("../utils/memory-retrieval.js");
+      const memorySelection = await retrieveMemorySelection({
+        bookDir,
+        chapterNumber: await this.state.getNextChapterNumber(bookId),
+        goal: "Index memory for RAG system",
+      });
+      await ragManager.indexMemory(memorySelection);
+      this.config.logger?.info(`RAG memory indexed for book ${bookId}`);
+    } catch (error) {
+      this.config.logger?.warn(`Failed to index memory to RAG: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async indexBookFoundationToRAG(bookId: string): Promise<void> {
+    try {
+      const ragManager = await this.getRAGManager(bookId);
+      if (!ragManager) return;
+      
+      const bookDir = this.state.bookDir(bookId);
+      const storyDir = join(bookDir, "story");
+      
+      // 读取基础设定文件
+      const foundationFiles = [
+        "story_bible.md",
+        "volume_outline.md",
+        "book_rules.md",
+        "style_guide.md"
+      ];
+      
+      for (const fileName of foundationFiles) {
+        try {
+          const filePath = join(storyDir, fileName);
+          const content = await readFile(filePath, "utf-8");
+          
+          // 处理文件内容并索引
+          const { createDocumentProcessor } = await import("../rag/document-processor.js");
+          const documentProcessor = createDocumentProcessor();
+          const chunks = documentProcessor.processDocument(content, {
+            fileName,
+            type: "foundation",
+          });
+          
+          // 手动添加到向量存储
+          const vectorStore = (ragManager as any).vectorStore;
+          if (vectorStore) {
+            await vectorStore.addChunks(chunks);
+          }
+          
+          this.config.logger?.info(`Indexed foundation file ${fileName} for book ${bookId}`);
+        } catch (error) {
+          // 文件不存在或读取失败，跳过
+          this.config.logger?.debug(`Failed to index foundation file ${fileName}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      
+      this.config.logger?.info(`RAG foundation indexed for book ${bookId}`);
+    } catch (error) {
+      this.config.logger?.warn(`Failed to index book foundation to RAG: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
