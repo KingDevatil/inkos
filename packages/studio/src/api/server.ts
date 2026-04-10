@@ -338,6 +338,46 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Actions ---
 
+  app.post("/api/books/:id/regenerate-outline", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ intent: string; rewriteLevel?: "low" | "medium" | "high" }>().catch(() => ({ intent: "", rewriteLevel: "medium" }));
+
+    if (!body.intent?.trim()) {
+      return c.json({ error: "Author intent is required" }, 400);
+    }
+
+    broadcast("outline:regenerate:start", { bookId: id });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const rewriteLevel = body.rewriteLevel as "low" | "medium" | "high" | undefined;
+      const result = await pipeline.regenerateOutline(id, body.intent, rewriteLevel);
+      broadcast("outline:regenerate:complete", { bookId: id });
+      return c.json({ ok: true, volumeOutline: result.volumeOutline, tempPath: result.tempPath });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("outline:regenerate:error", { bookId: id, error });
+      return c.json({ error }, 500);
+    }
+  });
+
+  app.post("/api/books/:id/confirm-outline", async (c) => {
+    const id = c.req.param("id");
+
+    broadcast("outline:confirm:start", { bookId: id });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      await pipeline.confirmOutline(id);
+      broadcast("outline:confirm:complete", { bookId: id });
+      return c.json({ ok: true });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("outline:confirm:error", { bookId: id, error });
+      return c.json({ error }, 500);
+    }
+  });
+
   app.post("/api/books/:id/write-next", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<{ wordCount?: number }>().catch(() => ({ wordCount: undefined }));

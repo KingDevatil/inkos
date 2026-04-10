@@ -149,6 +149,14 @@ export function BookDetail({
   const [outlineBrief, setOutlineBrief] = useState("");
   const [outlineFileName, setOutlineFileName] = useState("");
   const [regeneratingOutline, setRegeneratingOutline] = useState(false);
+  
+  // 卷纲重生成状态
+  const [showVolumeOutlineRegenerate, setShowVolumeOutlineRegenerate] = useState(false);
+  const [authorIntent, setAuthorIntent] = useState("");
+  const [rewriteLevel, setRewriteLevel] = useState<"low" | "medium" | "high">("medium");
+  const [regeneratingVolumeOutline, setRegeneratingVolumeOutline] = useState(false);
+  const [generatedVolumeOutline, setGeneratedVolumeOutline] = useState("");
+  const [showVolumeOutlinePreview, setShowVolumeOutlinePreview] = useState(false);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -323,6 +331,43 @@ export function BookDetail({
     }
   };
 
+  const handleRegenerateVolumeOutline = async () => {
+    if (!authorIntent.trim()) {
+      alert("请输入作者意图");
+      return;
+    }
+    setRegeneratingVolumeOutline(true);
+    try {
+      const response = await postApi(`/books/${bookId}/regenerate-outline`, {
+        intent: authorIntent,
+        rewriteLevel,
+      });
+      setGeneratedVolumeOutline(response.volumeOutline);
+      setShowVolumeOutlinePreview(true);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "卷纲重生成失败");
+    } finally {
+      setRegeneratingVolumeOutline(false);
+    }
+  };
+
+  const handleConfirmVolumeOutline = async () => {
+    setRegeneratingVolumeOutline(true);
+    try {
+      await postApi(`/books/${bookId}/confirm-outline`);
+      setShowVolumeOutlinePreview(false);
+      setShowVolumeOutlineRegenerate(false);
+      setAuthorIntent("");
+      setRewriteLevel("medium");
+      setGeneratedVolumeOutline("");
+      alert("卷纲更新确认成功，已提前生成章节规划");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "卷纲确认失败");
+    } finally {
+      setRegeneratingVolumeOutline(false);
+    }
+  };
+
   const saveAuditConfig = async () => {
     if (!auditConfig) return;
     setSavingAuditConfig(true);
@@ -400,6 +445,13 @@ export function BookDetail({
             {t("book.approveAll")} ({reviewCount})
           </button>
         )}
+        <button
+          onClick={() => setShowVolumeOutlineRegenerate(true)}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
+        >
+          <RefreshCw size={14} />
+          重生成卷纲
+        </button>
         <button
           onClick={() => (nav as { toTruth?: (id: string) => void }).toTruth?.(bookId)}
           className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
@@ -1558,6 +1610,161 @@ export function BookDetail({
               >
                 {regeneratingOutline ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Wand2 size={14} />}
                 {regeneratingOutline ? "生成中..." : "开始生成"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Volume Outline Regenerate Modal */}
+      {showVolumeOutlineRegenerate && (
+        <div className="fixed inset-0 flex items-start justify-center z-[100] pt-20">
+          <div className="bg-card rounded-2xl shadow-xl max-w-2xl w-full mx-4 flex flex-col" style={{ height: 'clamp(400px, 80vh, 800px)' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-border/50 shrink-0">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Wand2 size={20} className="text-primary" />
+                重生成卷纲
+              </h2>
+              <button
+                onClick={() => setShowVolumeOutlineRegenerate(false)}
+                className="p-2 rounded-lg hover:bg-primary/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+              {/* Author Intent Input */}
+              <div>
+                <label className="block text-sm font-medium mb-2">作者意图 <span className="text-destructive">*</span></label>
+                <div className="relative">
+                  <textarea
+                    value={authorIntent}
+                    onChange={(e) => setAuthorIntent(e.target.value)}
+                    placeholder="请输入你的创作意图，例如：\n- 希望增加更多动作场景\n- 强化主角与反派的冲突\n- 调整故事节奏，加快情节发展\n- 增加更多情感描写"
+                    className={`w-full ${c.input} rounded-md px-4 py-3 focus:outline-none min-h-[200px] resize-y`}
+                  />
+                  {authorIntent && (
+                    <button
+                      onClick={() => setAuthorIntent("")}
+                      className="absolute top-2 right-2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                      title="清除内容"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  💡 提示：作者意图越详细，生成的卷纲越符合你的预期。
+                </p>
+              </div>
+
+              {/* Rewrite Level Selection */}
+              <div>
+                <label className="block text-sm font-medium mb-2">重写幅度</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setRewriteLevel("low")}
+                    className={`px-3 py-2.5 rounded-md text-sm text-left transition-all ${
+                      rewriteLevel === "low"
+                        ? "bg-primary/15 text-primary border border-primary/30 font-medium"
+                        : "bg-secondary text-secondary-foreground border border-transparent hover:border-border"
+                    }`}
+                  >
+                    低
+                    <div className="text-xs text-muted-foreground mt-1">保留大部分原有情节</div>
+                  </button>
+                  <button
+                    onClick={() => setRewriteLevel("medium")}
+                    className={`px-3 py-2.5 rounded-md text-sm text-left transition-all ${
+                      rewriteLevel === "medium"
+                        ? "bg-primary/15 text-primary border border-primary/30 font-medium"
+                        : "bg-secondary text-secondary-foreground border border-transparent hover:border-border"
+                    }`}
+                  >
+                    中
+                    <div className="text-xs text-muted-foreground mt-1">适度调整情节结构</div>
+                  </button>
+                  <button
+                    onClick={() => setRewriteLevel("high")}
+                    className={`px-3 py-2.5 rounded-md text-sm text-left transition-all ${
+                      rewriteLevel === "high"
+                        ? "bg-primary/15 text-primary border border-primary/30 font-medium"
+                        : "bg-secondary text-secondary-foreground border border-transparent hover:border-border"
+                    }`}
+                  >
+                    高
+                    <div className="text-xs text-muted-foreground mt-1">重新设计情节结构</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end p-6 border-t border-border/50 shrink-0 bg-card rounded-b-2xl">
+              <button
+                onClick={() => setShowVolumeOutlineRegenerate(false)}
+                className="px-4 py-2 text-sm font-bold bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-all border border-border/50 mr-2"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleRegenerateVolumeOutline}
+                disabled={regeneratingVolumeOutline || !authorIntent.trim()}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+              >
+                {regeneratingVolumeOutline ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Wand2 size={14} />}
+                {regeneratingVolumeOutline ? "生成中..." : "开始生成"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Volume Outline Preview Modal */}
+      {showVolumeOutlinePreview && (
+        <div className="fixed inset-0 flex items-start justify-center z-[100] pt-20">
+          <div className="bg-card rounded-2xl shadow-xl max-w-3xl w-full mx-4 flex flex-col" style={{ height: 'clamp(400px, 80vh, 800px)' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-border/50 shrink-0">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <FileText size={20} className="text-primary" />
+                卷纲预览
+              </h2>
+              <button
+                onClick={() => setShowVolumeOutlinePreview(false)}
+                className="p-2 rounded-lg hover:bg-primary/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              <div className="prose max-w-none">
+                {generatedVolumeOutline.split('\n').map((line, index) => (
+                  <p key={index}>{line}</p>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end p-6 border-t border-border/50 shrink-0 bg-card rounded-b-2xl">
+              <button
+                onClick={() => setShowVolumeOutlinePreview(false)}
+                className="px-4 py-2 text-sm font-bold bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-all border border-border/50 mr-2"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmVolumeOutline}
+                disabled={regeneratingVolumeOutline}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+              >
+                {regeneratingVolumeOutline ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Check size={14} />}
+                {regeneratingVolumeOutline ? "确认中..." : "确认更新"}
               </button>
             </div>
           </div>

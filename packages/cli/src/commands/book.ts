@@ -9,6 +9,9 @@ import {
   formatBookCreateFoundationReady,
   formatBookCreateLocation,
   formatBookCreateNextStep,
+  formatBookRegenerateOutline,
+  formatBookConfirmOutline,
+  formatBookOutlineConfirmed,
   resolveCliLanguage,
 } from "../localization.js";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
@@ -206,6 +209,99 @@ bookCommand
         log(JSON.stringify({ error: String(e) }));
       } else {
         logError(`Failed to list books: ${e}`);
+      }
+      process.exit(1);
+    }
+  });
+
+bookCommand
+  .command("regenerate-outline")
+  .description("Regenerate volume outline based on author intent")
+  .argument("[book-id]", "Book ID (auto-detected if only one book)")
+  .option("--intent <intent>", "Author intent for the new outline")
+  .option("--intent-file <path>", "Path to file containing author intent")
+  .option("--rewrite-level <level>", "Rewrite level: low, medium, high", "medium")
+  .option("--json", "Output JSON")
+  .action(async (bookIdArg: string | undefined, opts) => {
+    try {
+      const root = findProjectRoot();
+      const state = new StateManager(root);
+      const bookId = await resolveBookId(bookIdArg, root);
+      const config = await loadConfig();
+      const book = await state.loadBookConfig(bookId);
+      const language = resolveCliLanguage(book.language);
+
+      let authorIntent: string;
+      if (opts.intent) {
+        authorIntent = opts.intent;
+      } else if (opts.intentFile) {
+        authorIntent = await readFile(resolve(opts.intentFile), "utf-8");
+      } else {
+        throw new Error("Either --intent or --intent-file must be provided");
+      }
+
+      if (!opts.json) log(formatBookRegenerateOutline(language, book.title));
+
+      const pipeline = new PipelineRunner(buildPipelineConfig(config, root));
+      const result = await pipeline.regenerateOutline(bookId, authorIntent, opts.rewriteLevel as "low" | "medium" | "high");
+
+      if (!opts.json) {
+        log("\nGenerated new outline:");
+        log(result.volumeOutline);
+        log("\nTo confirm this outline, run:");
+        log(`inkos book confirm-outline ${bookId}`);
+      } else {
+        log(JSON.stringify({
+          bookId,
+          title: book.title,
+          volumeOutline: result.volumeOutline,
+          tempPath: result.tempPath,
+          nextStep: `inkos book confirm-outline ${bookId}`,
+        }, null, 2));
+      }
+    } catch (e) {
+      if (opts.json) {
+        log(JSON.stringify({ error: String(e) }));
+      } else {
+        logError(`Failed to regenerate outline: ${e}`);
+      }
+      process.exit(1);
+    }
+  });
+
+bookCommand
+  .command("confirm-outline")
+  .description("Confirm the regenerated outline")
+  .argument("[book-id]", "Book ID (auto-detected if only one book)")
+  .option("--json", "Output JSON")
+  .action(async (bookIdArg: string | undefined, opts) => {
+    try {
+      const root = findProjectRoot();
+      const state = new StateManager(root);
+      const bookId = await resolveBookId(bookIdArg, root);
+      const config = await loadConfig();
+      const book = await state.loadBookConfig(bookId);
+      const language = resolveCliLanguage(book.language);
+
+      if (!opts.json) log(formatBookConfirmOutline(language, book.title));
+
+      const pipeline = new PipelineRunner(buildPipelineConfig(config, root));
+      await pipeline.confirmOutline(bookId);
+
+      if (opts.json) {
+        log(JSON.stringify({
+          bookId,
+          title: book.title,
+          ok: true,
+        }, null, 2));
+      } else {
+        log(formatBookOutlineConfirmed(language));
+      }
+    } catch (e) {
+      if (opts.json) {
+        log(JSON.stringify({ error: String(e) }));
+      } else {
+        logError(`Failed to confirm outline: ${e}`);
       }
       process.exit(1);
     }

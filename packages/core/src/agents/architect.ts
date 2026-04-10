@@ -2,7 +2,7 @@ import { BaseAgent } from "./base.js";
 import type { BookConfig, FanficMode } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import { readGenreProfile } from "./rules-reader.js";
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { renderHookSnapshot } from "../utils/memory-retrieval.js";
 
@@ -770,6 +770,136 @@ prohibitions:
     return this.parseSections(response.content);
   }
 
+  async regenerateOutline(
+    book: BookConfig,
+    bookDir: string,
+    authorIntent: string,
+    rewriteLevel: "low" | "medium" | "high" = "medium",
+  ): Promise<{ readonly volumeOutline: string }> {
+    const { profile: gp, body: genreBody } =
+      await readGenreProfile(this.ctx.projectRoot, book.genre);
+    const resolvedLanguage = book.language ?? gp.language;
+
+    // 读取现有卷纲和相邻卷内容
+    const existingOutline = await this.readFileSafe(join(bookDir, "story/volume_outline.md"));
+    const existingChapters = await this.loadExistingChapters(bookDir);
+    const adjacentVolumes = this.extractAdjacentVolumes(existingOutline);
+
+    const rewriteLevelInstructions = {
+      low: "保留大部分原有情节结构，只做小幅度调整以符合新的作者意图",
+      medium: "在保留核心情节的基础上，根据新的作者意图进行适度调整",
+      high: "根据新的作者意图，重新设计情节结构，只保留必要的核心元素",
+    };
+
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web fiction architect. Your task is to regenerate the volume outline based on the author's new intent.
+
+## Author Intent
+${authorIntent}
+
+## Rewrite Level: ${rewriteLevel}
+${rewriteLevelInstructions[rewriteLevel]}
+
+## Existing Outline
+${existingOutline}
+
+## Existing Chapters
+${existingChapters}
+
+## Adjacent Volumes
+${adjacentVolumes}
+
+## Requirements
+1. Regenerate the volume outline based on the author's intent
+2. Ensure smooth transition with adjacent volumes
+3. Preserve key plot elements according to the rewrite level
+4. Maintain consistency with the existing story bible and character settings
+5. Generate a comprehensive volume outline with clear chapter ranges, core conflicts, and key turning points
+6. Follow the golden first three chapters rule for new volumes
+
+Output only the regenerated volume outline in Markdown format.`
+      : `你是一个专业的网络小说架构师。你的任务是根据作者的新意图重新生成卷纲。
+
+## 作者意图
+${authorIntent}
+
+## 重写幅度：${rewriteLevel}
+${rewriteLevelInstructions[rewriteLevel]}
+
+## 现有卷纲
+${existingOutline}
+
+## 现有章节
+${existingChapters}
+
+## 相邻卷内容
+${adjacentVolumes}
+
+## 要求
+1. 根据作者意图重新生成卷纲
+2. 确保与相邻卷的内容衔接自然
+3. 根据重写幅度保留关键情节元素
+4. 保持与现有故事设定和角色设定的一致性
+5. 生成完整的卷纲，包含清晰的章节范围、核心冲突和关键转折点
+6. 新卷遵循黄金三章法则
+
+只输出重新生成的卷纲，使用Markdown格式。`;
+
+    const response = await this.chat([
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: resolvedLanguage === "en"
+          ? "Please regenerate the volume outline based on the author's intent and the provided context."
+          : "请根据作者意图和提供的上下文重新生成卷纲。",
+      },
+    ], { maxTokens: 8192, temperature: 0.7 });
+
+    return { volumeOutline: response.content.trim() };
+  }
+
+  private async loadExistingChapters(bookDir: string): Promise<string> {
+    try {
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const chapterFiles = files.filter(f => f.endsWith(".md")).sort();
+      
+      let chaptersContent = "";
+      for (const file of chapterFiles.slice(-3)) { // 只加载最近3章
+        const content = await readFile(join(chaptersDir, file), "utf-8");
+        chaptersContent += `## ${file}\n${content}\n\n`;
+      }
+      
+      return chaptersContent || "(No existing chapters)";
+    } catch {
+      return "(No existing chapters)";
+    }
+  }
+
+  private extractAdjacentVolumes(outline: string): string {
+    // 简单提取相邻卷的信息
+    const lines = outline.split("\n");
+    let volumes = [];
+    let currentVolume = "";
+    
+    for (const line of lines) {
+      if (line.startsWith("#") && line.includes("卷")) {
+        if (currentVolume) {
+          volumes.push(currentVolume);
+        }
+        currentVolume = line + "\n";
+      } else if (currentVolume) {
+        currentVolume += line + "\n";
+      }
+    }
+    
+    if (currentVolume) {
+      volumes.push(currentVolume);
+    }
+    
+    return volumes.slice(-2).join("\n") || "(No adjacent volumes)";
+  }
+
   private buildReviewFeedbackBlock(
     reviewFeedback: string | undefined,
     language: "zh" | "en",
@@ -914,5 +1044,14 @@ ${trimmed}\n`;
     return language === "zh"
       ? `${trimmedNotes}（${trimmedSeed}）`
       : `${trimmedNotes} (${trimmedSeed})`;
+  }
+
+  private async readFileSafe(filePath: string): Promise<string> {
+    try {
+      const content = await readFile(filePath, "utf-8");
+      return content;
+    } catch {
+      return "";
+    }
   }
 }

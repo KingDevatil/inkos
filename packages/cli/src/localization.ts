@@ -220,3 +220,24 @@ export function formatImportCanonComplete(language: CliLanguage): string[] {
     }),
   ];
 }
+
+export function formatBookRegenerateOutline(language: CliLanguage, bookTitle: string): string {
+  return localize(language, {
+    zh: `开始为《${bookTitle}》重新生成卷纲...`,
+    en: `Regenerating outline for "${bookTitle}"...`,
+  });
+}
+
+export function formatBookConfirmOutline(language: CliLanguage, bookTitle: string): string {
+  return localize(language, {
+    zh: `确认《${bookTitle}》的卷纲更新...`,
+    en: `Confirming outline update for "${bookTitle}"...`,
+  });
+}
+
+export function formatBookOutlineConfirmed(language: CliLanguage): string {
+  return localize(language, {
+    zh: "卷纲更新确认成功，已提前生成章节规划。",
+    en: "Outline update confirmed, chapter plans have been pre-generated.",
+  });
+}

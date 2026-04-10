@@ -36,7 +36,7 @@ import type { MemorySelection } from "../utils/memory-retrieval.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
 import { rewriteStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
-import { readFile, readdir, writeFile, mkdir, rename, rm, stat } from "node:fs/promises";
+import { readFile, readdir, writeFile, mkdir, rename, rm, stat, copyFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
   parseStateDegradedReviewNote,
@@ -248,6 +248,156 @@ export class PipelineRunner {
         en: `Style fingerprint extraction failed and was skipped: ${detail}`,
       });
     }
+  }
+
+  async regenerateOutline(
+    bookId: string,
+    authorIntent: string,
+    rewriteLevel: "low" | "medium" | "high" = "medium",
+  ): Promise<{ readonly volumeOutline: string; readonly tempPath: string }> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const language = await this.resolveBookLanguage(book);
+
+    this.logStage(language, {
+      zh: "开始重新生成卷纲",
+      en: "Regenerating volume outline",
+    });
+
+    const architect = new ArchitectAgent(this.config);
+    const result = await architect.regenerateOutline(book, bookDir, authorIntent, rewriteLevel);
+
+    // 保存为临时文件
+    const tempPath = join(bookDir, "story", "volume_outline.temp.md");
+    await writeFile(tempPath, result.volumeOutline, "utf-8");
+
+    this.logInfo(language, {
+      zh: "卷纲重新生成完成，已保存为临时文件",
+      en: "Volume outline regenerated and saved as temporary file",
+    });
+
+    return { volumeOutline: result.volumeOutline, tempPath };
+  }
+
+  async confirmOutline(bookId: string): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const language = await this.resolveBookLanguage(book);
+
+    this.logStage(language, {
+      zh: "确认卷纲更新",
+      en: "Confirming outline update",
+    });
+
+    // 替换原卷纲文件
+    const tempPath = join(bookDir, "story", "volume_outline.temp.md");
+    const finalPath = join(bookDir, "story", "volume_outline.md");
+
+    try {
+      await copyFile(tempPath, finalPath);
+      await unlink(tempPath);
+
+      this.logInfo(language, {
+        zh: "卷纲更新完成",
+        en: "Volume outline updated successfully",
+      });
+
+      // 提前生成章节规划
+      await this.preGenerateChapterPlans(bookId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logWarn(language, {
+        zh: `卷纲更新失败：${detail}`,
+        en: `Failed to update volume outline: ${detail}`,
+      });
+      throw error;
+    }
+  }
+
+  private async preGenerateChapterPlans(bookId: string): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const language = await this.resolveBookLanguage(book);
+    const nextChapter = await this.state.getNextChapterNumber(bookId);
+
+    this.logStage(language, {
+      zh: "开始提前生成章节规划",
+      en: "Pre-generating chapter plans",
+    });
+
+    // 提前生成接下来3章的规划
+    for (let i = 0; i < 3; i++) {
+      const chapterNumber = nextChapter + i;
+      if (chapterNumber > book.targetChapters) break;
+
+      try {
+        const planner = new PlannerAgent(this.config);
+        await planner.planChapter({
+          book,
+          bookDir,
+          chapterNumber,
+        });
+
+        this.logInfo(language, {
+          zh: `已生成第 ${chapterNumber} 章规划`,
+          en: `Generated plan for chapter ${chapterNumber}`,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logWarn(language, {
+          zh: `生成第 ${nextChapter + i} 章规划失败：${detail}`,
+          en: `Failed to generate plan for chapter ${nextChapter + i}: ${detail}`,
+        });
+      }
+    }
+
+    this.logInfo(language, {
+      zh: "章节规划生成完成",
+      en: "Chapter plans generated successfully",
+    });
+  }
+
+  async updateChapterPlans(bookId: string): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const language = await this.resolveBookLanguage(book);
+    const nextChapter = await this.state.getNextChapterNumber(bookId);
+
+    this.logStage(language, {
+      zh: "更新章节规划",
+      en: "Updating chapter plans",
+    });
+
+    // 更新接下来5章的规划
+    for (let i = 0; i < 5; i++) {
+      const chapterNumber = nextChapter + i;
+      if (chapterNumber > book.targetChapters) break;
+
+      try {
+        const planner = new PlannerAgent(this.config);
+        await planner.planChapter({
+          book,
+          bookDir,
+          chapterNumber,
+        });
+
+        this.logInfo(language, {
+          zh: `已更新第 ${chapterNumber} 章规划`,
+          en: `Updated plan for chapter ${chapterNumber}`,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logWarn(language, {
+          zh: `更新第 ${nextChapter + i} 章规划失败：${detail}`,
+          en: `Failed to update plan for chapter ${nextChapter + i}: ${detail}`,
+        });
+      }
+    }
+
+    this.logInfo(language, {
+      zh: "章节规划更新完成",
+      en: "Chapter plans updated successfully",
+    });
   }
 
   private async generateAndReviewFoundation(params: {
