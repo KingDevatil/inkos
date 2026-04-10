@@ -157,10 +157,56 @@ export function BookDetail({
   const [regeneratingVolumeOutline, setRegeneratingVolumeOutline] = useState(false);
   const [generatedVolumeOutline, setGeneratedVolumeOutline] = useState("");
   const [showVolumeOutlinePreview, setShowVolumeOutlinePreview] = useState(false);
+  const [volumePlans, setVolumePlans] = useState<any>(null);
+  const [loadingVolumePlans, setLoadingVolumePlans] = useState(false);
+  const [activeTab, setActiveTab] = useState<"chapters" | "volume-plans">('chapters');
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
   const latestPersistedChapter = data ? data.nextChapter - 1 : 0;
+
+  const loadVolumePlans = async () => {
+    setLoadingVolumePlans(true);
+    try {
+      const response = await fetchJson(`/books/${bookId}/volume-plans`);
+      setVolumePlans(response.volumePlans);
+    } catch (e) {
+      console.error('Failed to load volume plans:', e);
+    } finally {
+      setLoadingVolumePlans(false);
+    }
+  };
+
+  const generateChapterPlans = async (volumeId: string) => {
+    try {
+      await postApi(`/books/${bookId}/volumes/${volumeId}/generate-plans`);
+      alert('章节规划生成成功');
+      loadVolumePlans();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '章节规划生成失败');
+    }
+  };
+
+  const rewriteVolumeChapters = async (volumeId: string) => {
+    if (!confirm('确定要重写本卷所有章节吗？')) return;
+    try {
+      await postApi(`/books/${bookId}/volumes/${volumeId}/rewrite-chapters`);
+      alert('本卷章节重写已开始，请等待完成');
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '章节重写失败');
+    }
+  };
+
+  const markAffectedChapters = async (volumeId: string) => {
+    try {
+      await postApi(`/books/${bookId}/volumes/${volumeId}/mark-affected`);
+      alert('受影响章节已标记，需要重新审计');
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '标记受影响章节失败');
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -577,164 +623,257 @@ export function BookDetail({
         </div>
       </div>
 
-      {/* Chapters Table */}
+      {/* Tabs for Chapters and Volume Plans */}
       <div className="paper-sheet rounded-2xl border border-border/40 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-border/40">
-          <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">{t("book.chapters")}</h2>
+        <div className="flex border-b border-border/40">
+          <button
+            onClick={() => setActiveTab('chapters')}
+            className={`flex-1 py-4 px-6 text-sm font-bold uppercase tracking-widest transition-colors ${activeTab === 'chapters' ? 'bg-primary/10 text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            {t("book.chapters")}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('volume-plans');
+              loadVolumePlans();
+            }}
+            className={`flex-1 py-4 px-6 text-sm font-bold uppercase tracking-widest transition-colors ${activeTab === 'volume-plans' ? 'bg-primary/10 text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            卷纲和章节规划
+          </button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border/40">
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-20">{t("book.chapter")}</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.title")}</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-24">{t("book.words")}</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-36">{t("book.status")}</th>
-                <th className="text-right px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-24">{t("book.actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {chapters.map((ch) => (
-                <tr key={ch.number} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
-                  <td className="px-6 py-4 text-sm font-medium">{ch.number}</td>
-                  <td className="px-6 py-4">
-                    <button
-                      onClick={() => nav.toChapter(bookId, ch.number)}
-                      className={`text-sm font-medium text-left hover:underline ${c.link}`}
-                    >
-                      {ch.title || `${t("chapter.label", { n: ch.number })}`}
-                    </button>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-muted-foreground">{ch.wordCount.toLocaleString()}</td>
-                  <td className="px-6 py-4">
-                    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tight ${STATUS_CONFIG[ch.status]?.color ?? "bg-muted text-muted-foreground"}`}>
-                      {STATUS_CONFIG[ch.status]?.icon}
-                      {translateChapterStatus(ch.status, t)}
-                    </div>
-                    {ch.status === "ready-for-review" && (
-                      <div className="flex items-center gap-1 mt-1">
-                        <button
-                          onClick={async () => {
-                            try {
-                              await postApi(`/books/${bookId}/chapters/${ch.number}/approve`, {});
-                              refetch();
-                            } catch (e) {
-                              alert(e instanceof Error ? e.message : "Failed to approve");
-                            }
-                          }}
-                          className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/10 text-emerald-600 rounded hover:bg-emerald-500/20 transition-colors"
-                        >
-                          {t("book.approve")}
-                        </button>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await postApi(`/books/${bookId}/chapters/${ch.number}/reject`, {});
-                              refetch();
-                            } catch (e) {
-                              alert(e instanceof Error ? e.message : "Failed to reject");
-                            }
-                          }}
-                          className="px-2 py-0.5 text-[10px] font-bold bg-destructive/10 text-destructive rounded hover:bg-destructive/20 transition-colors"
-                        >
-                          {t("book.reject")}
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="relative" ref={dropdownRef}>
+
+        {/* Chapters Tab */}
+        {activeTab === 'chapters' && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border/40">
+                  <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-20">{t("book.chapter")}</th>
+                  <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.title")}</th>
+                  <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-24">{t("book.words")}</th>
+                  <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-36">{t("book.status")}</th>
+                  <th className="text-right px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-24">{t("book.actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {chapters.map((ch) => (
+                  <tr key={ch.number} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                    <td className="px-6 py-4 text-sm font-medium">{ch.number}</td>
+                    <td className="px-6 py-4">
                       <button
-                        onClick={() => setOpenDropdown(openDropdown === ch.number ? null : ch.number)}
-                        className="p-1.5 rounded-lg hover:bg-secondary/50 transition-colors"
+                        onClick={() => nav.toChapter(bookId, ch.number)}
+                        className={`text-sm font-medium text-left hover:underline ${c.link}`}
                       >
-                        <ChevronDown size={16} />
+                        {ch.title || `${t("chapter.label", { n: ch.number })}`}
                       </button>
-                      {openDropdown === ch.number && (
-                        <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border/50 rounded-lg shadow-lg z-10 py-1">
+                    </td>
+                    <td className="px-6 py-4 text-sm text-muted-foreground">{ch.wordCount.toLocaleString()}</td>
+                    <td className="px-6 py-4">
+                      <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tight ${STATUS_CONFIG[ch.status]?.color ?? "bg-muted text-muted-foreground"}`}>
+                        {STATUS_CONFIG[ch.status]?.icon}
+                        {translateChapterStatus(ch.status, t)}
+                      </div>
+                      {ch.status === "ready-for-review" && (
+                        <div className="flex items-center gap-1 mt-1">
                           <button
                             onClick={async () => {
-                              setOpenDropdown(null);
                               try {
-                                await postApi(`/books/${bookId}/chapters/${ch.number}/audit`, {});
+                                await postApi(`/books/${bookId}/chapters/${ch.number}/approve`, {});
                                 refetch();
                               } catch (e) {
-                                alert(e instanceof Error ? e.message : "Failed to audit");
+                                alert(e instanceof Error ? e.message : "Failed to approve");
                               }
                             }}
-                            className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2"
+                            className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/10 text-emerald-600 rounded hover:bg-emerald-500/20 transition-colors"
                           >
-                            <Search size={14} />
-                            {t("book.audit")}
+                            {t("book.approve")}
                           </button>
                           <button
                             onClick={async () => {
-                              setOpenDropdown(null);
-                              setRewritingChapters((prev) => [...prev, ch.number]);
                               try {
-                                await postApi(`/books/${bookId}/chapters/${ch.number}/rewrite`, {});
+                                await postApi(`/books/${bookId}/chapters/${ch.number}/reject`, {});
                                 refetch();
                               } catch (e) {
-                                alert(e instanceof Error ? e.message : "Failed to rewrite");
-                              } finally {
-                                setRewritingChapters((prev) => prev.filter((n) => n !== ch.number));
+                                alert(e instanceof Error ? e.message : "Failed to reject");
                               }
                             }}
-                            disabled={rewritingChapters.includes(ch.number)}
-                            className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
+                            className="px-2 py-0.5 text-[10px] font-bold bg-destructive/10 text-destructive rounded hover:bg-destructive/20 transition-colors"
                           >
-                            {rewritingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <RefreshCw size={14} />}
-                            {t("book.rewrite")}
-                          </button>
-                          <button
-                            onClick={async () => {
-                              setOpenDropdown(null);
-                              setSyncingChapters((prev) => [...prev, ch.number]);
-                              try {
-                                await postApi(`/books/${bookId}/chapters/${ch.number}/sync`, {});
-                                refetch();
-                              } catch (e) {
-                                alert(e instanceof Error ? e.message : "Failed to sync");
-                              } finally {
-                                setSyncingChapters((prev) => prev.filter((n) => n !== ch.number));
-                              }
-                            }}
-                            disabled={syncingChapters.includes(ch.number)}
-                            className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
-                          >
-                            {syncingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <Sparkles size={14} />}
-                            {t("book.sync")}
-                          </button>
-                          <div className="border-t border-border/50 my-1" />
-                          <button
-                            onClick={async () => {
-                              setOpenDropdown(null);
-                              if (!confirm(t("book.confirmDelete"))) return;
-                              setDeletingChapters((prev) => [...prev, ch.number]);
-                              try {
-                                await fetchJson(`/books/${bookId}/chapters/${ch.number}`, { method: "DELETE" });
-                                refetch();
-                              } catch (e) {
-                                alert(e instanceof Error ? e.message : "Failed to delete");
-                              } finally {
-                                setDeletingChapters((prev) => prev.filter((n) => n !== ch.number));
-                              }
-                            }}
-                            disabled={deletingChapters.includes(ch.number)}
-                            className="w-full px-3 py-2 text-left text-sm hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-2 disabled:opacity-50"
-                          >
-                            {deletingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" /> : <Trash2 size={14} />}
-                            {t("book.delete")}
+                            {t("book.reject")}
                           </button>
                         </div>
                       )}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="relative" ref={dropdownRef}>
+                        <button
+                          onClick={() => setOpenDropdown(openDropdown === ch.number ? null : ch.number)}
+                          className="p-1.5 rounded-lg hover:bg-secondary/50 transition-colors"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                        {openDropdown === ch.number && (
+                          <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border/50 rounded-lg shadow-lg z-10 py-1">
+                            <button
+                              onClick={async () => {
+                                setOpenDropdown(null);
+                                try {
+                                  await postApi(`/books/${bookId}/chapters/${ch.number}/audit`, {});
+                                  refetch();
+                                } catch (e) {
+                                  alert(e instanceof Error ? e.message : "Failed to audit");
+                                }
+                              }}
+                              className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2"
+                            >
+                              <Search size={14} />
+                              {t("book.audit")}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setOpenDropdown(null);
+                                setRewritingChapters((prev) => [...prev, ch.number]);
+                                try {
+                                  await postApi(`/books/${bookId}/chapters/${ch.number}/rewrite`, {});
+                                  refetch();
+                                } catch (e) {
+                                  alert(e instanceof Error ? e.message : "Failed to rewrite");
+                                } finally {
+                                  setRewritingChapters((prev) => prev.filter((n) => n !== ch.number));
+                                }
+                              }}
+                              disabled={rewritingChapters.includes(ch.number)}
+                              className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
+                            >
+                              {rewritingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <RefreshCw size={14} />}
+                              {t("book.rewrite")}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setOpenDropdown(null);
+                                setSyncingChapters((prev) => [...prev, ch.number]);
+                                try {
+                                  await postApi(`/books/${bookId}/chapters/${ch.number}/sync`, {});
+                                  refetch();
+                                } catch (e) {
+                                  alert(e instanceof Error ? e.message : "Failed to sync");
+                                } finally {
+                                  setSyncingChapters((prev) => prev.filter((n) => n !== ch.number));
+                                }
+                              }}
+                              disabled={syncingChapters.includes(ch.number)}
+                              className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
+                            >
+                              {syncingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <Sparkles size={14} />}
+                              {t("book.sync")}
+                            </button>
+                            <div className="border-t border-border/50 my-1" />
+                            <button
+                              onClick={async () => {
+                                setOpenDropdown(null);
+                                if (!confirm(t("book.confirmDelete"))) return;
+                                setDeletingChapters((prev) => [...prev, ch.number]);
+                                try {
+                                  await fetchJson(`/books/${bookId}/chapters/${ch.number}`, { method: "DELETE" });
+                                  refetch();
+                                } catch (e) {
+                                  alert(e instanceof Error ? e.message : "Failed to delete");
+                                } finally {
+                                  setDeletingChapters((prev) => prev.filter((n) => n !== ch.number));
+                                }
+                              }}
+                              disabled={deletingChapters.includes(ch.number)}
+                              className="w-full px-3 py-2 text-left text-sm hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-2 disabled:opacity-50"
+                            >
+                              {deletingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" /> : <Trash2 size={14} />}
+                              {t("book.delete")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Volume Plans Tab */}
+        {activeTab === 'volume-plans' && (
+          <div className="p-6">
+            {loadingVolumePlans ? (
+              <div className="flex items-center justify-center h-64">
+                <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+              </div>
+            ) : volumePlans ? (
+              <div className="space-y-6">
+                {volumePlans.map((volume: any) => (
+                  <div key={volume.id} className="border border-border/40 rounded-xl p-4">
+                    <div className="flex items-start justify-between mb-4">
+                      <div>
+                        <h3 className="text-lg font-bold">{volume.title}</h3>
+                        <p className="text-sm text-muted-foreground mt-1">{volume.description}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => generateChapterPlans(volume.id)}
+                          className="px-3 py-1.5 text-xs font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
+                        >
+                          生成章节规划
+                        </button>
+                        <button
+                          onClick={() => rewriteVolumeChapters(volume.id)}
+                          className="px-3 py-1.5 text-xs font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
+                        >
+                          重写本卷章节
+                        </button>
+                        <button
+                          onClick={() => markAffectedChapters(volume.id)}
+                          className="px-3 py-1.5 text-xs font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all"
+                        >
+                          标记受影响章节
+                        </button>
+                      </div>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    {volume.chapterPlans ? (
+                      <div className="mt-4 space-y-3">
+                        <h4 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">章节规划</h4>
+                        {volume.chapterPlans.map((chapter: any, index: number) => (
+                          <div key={index} className="flex items-center gap-3 p-3 border border-border/20 rounded-lg">
+                            <div className="w-8 h-8 flex items-center justify-center bg-primary/10 text-primary rounded-full text-sm font-bold">
+                              {index + 1}
+                            </div>
+                            <div className="flex-1">
+                              <div className="font-medium">{chapter.title}</div>
+                              <div className="text-xs text-muted-foreground">{chapter.description}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-4 p-4 border border-dashed border-border/50 rounded-lg text-center text-muted-foreground">
+                        尚未生成章节规划
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground">
+                <Database size={48} className="mb-4 opacity-50" />
+                <p>未加载卷纲和章节规划</p>
+                <button
+                  onClick={loadVolumePlans}
+                  className="mt-4 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
+                >
+                  加载卷纲和章节规划
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Delete Confirmation */}

@@ -689,7 +689,7 @@ export class PipelineRunner {
     return radar.scan();
   }
 
-  async initBook(book: BookConfig): Promise<void> {
+  async initBook(book: BookConfig): Promise<{ readonly volumeOutline: string; readonly tempPath: string }> {
     const architect = new ArchitectAgent(this.agentCtxFor("architect", book.id));
     const bookDir = this.state.bookDir(book.id);
     const stagingBookDir = join(
@@ -737,6 +737,7 @@ export class PipelineRunner {
       this.logStage(stageLanguage, { zh: "创建初始快照", en: "creating initial snapshot" });
       await this.state.snapshotStateAt(stagingBookDir, 0);
 
+      // 保存为临时目录，等待用户确认卷纲
       if (await this.pathExists(bookDir)) {
         if (await this.state.isCompleteBookDirectory(bookDir)) {
           throw new Error(`Book "${book.id}" already exists at books/${book.id}/. Use a different title or delete the existing book first.`);
@@ -744,12 +745,209 @@ export class PipelineRunner {
         await rm(bookDir, { recursive: true, force: true });
       }
 
-      await rename(stagingBookDir, bookDir);
-      
-      // 索引基础设定文件到RAG系统
-      await this.indexBookFoundationToRAG(book.id);
+      // 保存卷纲为临时文件，返回给前端确认
+      const tempPath = join(stagingBookDir, "story", "volume_outline.temp.md");
+      await writeFile(tempPath, foundation.volumeOutline, "utf-8");
+
+      this.logInfo(stageLanguage, {
+        zh: "卷纲生成完成，等待用户确认",
+        en: "Volume outline generated, waiting for user confirmation",
+      });
+
+      return { volumeOutline: foundation.volumeOutline, tempPath: stagingBookDir };
     } catch (error) {
       await rm(stagingBookDir, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async confirmBookCreation(bookId: string, tempPath: string): Promise<void> {
+    const book = await this.state.loadBookConfigAt(tempPath);
+    const bookDir = this.state.bookDir(bookId);
+    const stageLanguage = await this.resolveBookLanguage(book);
+
+    this.logStage(stageLanguage, { zh: "确认书籍创建", en: "Confirming book creation" });
+
+    try {
+      // 替换原卷纲文件
+      const tempOutlinePath = join(tempPath, "story", "volume_outline.temp.md");
+      const finalOutlinePath = join(tempPath, "story", "volume_outline.md");
+      await copyFile(tempOutlinePath, finalOutlinePath);
+      await unlink(tempOutlinePath);
+
+      // 重命名临时目录为正式书籍目录
+      if (await this.pathExists(bookDir)) {
+        await rm(bookDir, { recursive: true, force: true });
+      }
+      await rename(tempPath, bookDir);
+
+      this.logInfo(stageLanguage, {
+        zh: "书籍创建完成",
+        en: "Book creation completed",
+      });
+
+      // 索引基础设定文件到RAG系统
+      await this.indexBookFoundationToRAG(bookId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logWarn(stageLanguage, {
+        zh: `书籍创建失败：${detail}`,
+        en: `Failed to create book: ${detail}`,
+      });
+      throw error;
+    }
+  }
+
+  async generateChapterPlansForVolume(bookId: string, volumeId: number): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const stageLanguage = await this.resolveBookLanguage(book);
+
+    this.logStage(stageLanguage, {
+      zh: `为第 ${volumeId} 卷生成章节规划`,
+      en: `Generating chapter plans for volume ${volumeId}`,
+    });
+
+    // 读取卷纲，确定本卷的章节范围
+    const outlinePath = join(bookDir, "story", "volume_outline.md");
+    const outlineContent = await readFile(outlinePath, "utf-8");
+    
+    // 解析卷纲，找到指定卷的章节范围
+    const volumeRegex = new RegExp(`### 第${volumeId}卷[\s\S]*?章节范围：(\d+)-(\d+)`, "g");
+    const match = volumeRegex.exec(outlineContent);
+    if (!match) {
+      throw new Error(`Volume ${volumeId} not found in outline`);
+    }
+    
+    const startChapter = parseInt(match[1], 10);
+    const endChapter = parseInt(match[2], 10);
+
+    // 生成章节规划
+    for (let chapterNumber = startChapter; chapterNumber <= endChapter; chapterNumber++) {
+      if (chapterNumber > book.targetChapters) break;
+
+      try {
+        const planner = new PlannerAgent(this.config);
+        await planner.planChapter({
+          book,
+          bookDir,
+          chapterNumber,
+        });
+
+        this.logInfo(stageLanguage, {
+          zh: `已生成第 ${chapterNumber} 章规划`,
+          en: `Generated plan for chapter ${chapterNumber}`,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logWarn(stageLanguage, {
+          zh: `生成第 ${chapterNumber} 章规划失败：${detail}`,
+          en: `Failed to generate plan for chapter ${chapterNumber}: ${detail}`,
+        });
+      }
+    }
+
+    this.logInfo(stageLanguage, {
+      zh: "章节规划生成完成",
+      en: "Chapter plans generated successfully",
+    });
+  }
+
+  async regenerateVolumeChapters(bookId: string, volumeId: number): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const stageLanguage = await this.resolveBookLanguage(book);
+
+    this.logStage(stageLanguage, {
+      zh: `重写第 ${volumeId} 卷章节`,
+      en: `Rewriting chapters for volume ${volumeId}`,
+    });
+
+    // 读取卷纲，确定本卷的章节范围
+    const outlinePath = join(bookDir, "story", "volume_outline.md");
+    const outlineContent = await readFile(outlinePath, "utf-8");
+    
+    // 解析卷纲，找到指定卷的章节范围
+    const volumeRegex = new RegExp(`### 第${volumeId}卷[\s\S]*?章节范围：(\d+)-(\d+)`, "g");
+    const match = volumeRegex.exec(outlineContent);
+    if (!match) {
+      throw new Error(`Volume ${volumeId} not found in outline`);
+    }
+    
+    const startChapter = parseInt(match[1], 10);
+    const endChapter = parseInt(match[2], 10);
+
+    // 重写本卷所有章节
+    for (let chapterNumber = startChapter; chapterNumber <= endChapter; chapterNumber++) {
+      if (chapterNumber > book.targetChapters) break;
+
+      try {
+        // 检查章节是否存在
+        const chaptersDir = join(bookDir, "chapters");
+        const files = await readdir(chaptersDir);
+        const paddedNum = String(chapterNumber).padStart(4, "0");
+        const existingFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+        
+        if (existingFile) {
+          // 重写章节
+          await this.reviseDraft(bookId, chapterNumber, "rewrite");
+          
+          // 审计章节
+          await this.auditDraft(bookId, chapterNumber);
+
+          this.logInfo(stageLanguage, {
+            zh: `已重写并审计第 ${chapterNumber} 章`,
+            en: `Rewrote and audited chapter ${chapterNumber}`,
+          });
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logWarn(stageLanguage, {
+          zh: `重写第 ${chapterNumber} 章失败：${detail}`,
+          en: `Failed to rewrite chapter ${chapterNumber}: ${detail}`,
+        });
+      }
+    }
+
+    this.logInfo(stageLanguage, {
+      zh: "本卷章节重写完成",
+      en: "Volume chapters rewritten successfully",
+    });
+  }
+
+  async markAffectedChapters(bookId: string, affectedChapterRange: { start: number; end: number }): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const stageLanguage = await this.resolveBookLanguage(book);
+
+    this.logStage(stageLanguage, {
+      zh: "标记受影响章节",
+      en: "Marking affected chapters",
+    });
+
+    try {
+      const index = await this.state.loadChapterIndex(bookId);
+      const updated = index.map((ch) => {
+        if (ch.number >= affectedChapterRange.start && ch.number <= affectedChapterRange.end) {
+          return {
+            ...ch,
+            status: "needs-review" as ChapterMeta["status"],
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return ch;
+      });
+      await this.state.saveChapterIndex(bookId, updated);
+
+      this.logInfo(stageLanguage, {
+        zh: `已标记第 ${affectedChapterRange.start}-${affectedChapterRange.end} 章为需要审核`,
+        en: `Marked chapters ${affectedChapterRange.start}-${affectedChapterRange.end} as needs review`,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logWarn(stageLanguage, {
+        zh: `标记受影响章节失败：${detail}`,
+        en: `Failed to mark affected chapters: ${detail}`,
+      });
       throw error;
     }
   }

@@ -197,6 +197,15 @@ export class StateManager {
     return JSON.parse(raw) as BookConfig;
   }
 
+  async loadBookConfigAt(bookDir: string): Promise<BookConfig> {
+    const configPath = join(bookDir, "book.json");
+    const raw = await readFile(configPath, "utf-8");
+    if (!raw.trim()) {
+      throw new Error(`book.json is empty`);
+    }
+    return JSON.parse(raw) as BookConfig;
+  }
+
   async saveBookConfig(bookId: string, config: BookConfig): Promise<void> {
     await this.saveBookConfigAt(this.bookDir(bookId), config);
   }
@@ -581,5 +590,91 @@ export class StateManager {
       "utf-8",
     );
   }
+
+  /**
+   * 加载卷纲配置
+   * @param bookId 书籍ID
+   * @returns 卷纲配置
+   */
+  async loadVolumeOutline(bookId: string): Promise<string | null> {
+    const outlinePath = join(this.bookDir(bookId), "story", "volume_outline.md");
+    try {
+      const content = await readFile(outlinePath, "utf-8");
+      return content;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 保存卷纲配置
+   * @param bookId 书籍ID
+   * @param content 卷纲内容
+   */
+  async saveVolumeOutline(bookId: string, content: string): Promise<void> {
+    const outlinePath = join(this.bookDir(bookId), "story", "volume_outline.md");
+    await mkdir(join(this.bookDir(bookId), "story"), { recursive: true });
+    await writeFile(outlinePath, content, "utf-8");
+  }
+
+  /**
+   * 加载章节规划
+   * @param bookId 书籍ID
+   * @param volumeId 分卷ID
+   * @returns 章节规划
+   */
+  async loadChapterPlans(bookId: string, volumeId: string): Promise<Record<string, unknown> | null> {
+    const plansPath = join(this.bookDir(bookId), "story", "chapter_plans.json");
+    try {
+      const raw = await readFile(plansPath, "utf-8");
+      const plans = JSON.parse(raw) as Record<string, Record<string, unknown>>;
+      return plans[volumeId] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 保存章节规划
+   * @param bookId 书籍ID
+   * @param volumeId 分卷ID
+   * @param plans 章节规划
+   */
+  async saveChapterPlans(bookId: string, volumeId: string, plans: Record<string, unknown>): Promise<void> {
+    const plansPath = join(this.bookDir(bookId), "story", "chapter_plans.json");
+    await mkdir(join(this.bookDir(bookId), "story"), { recursive: true });
+    
+    let allPlans: Record<string, Record<string, unknown>> = {};
+    try {
+      const raw = await readFile(plansPath, "utf-8");
+      allPlans = JSON.parse(raw) as Record<string, Record<string, unknown>>;
+    } catch {
+      // 文件不存在，使用空对象
+    }
+    
+    allPlans[volumeId] = plans;
+    await writeFile(plansPath, JSON.stringify(allPlans, null, 2), "utf-8");
+  }
+
+  /**
+   * 标记受影响的章节
+   * @param bookId 书籍ID
+   * @param affectedChapterNumbers 受影响的章节编号
+   */
+  async markAffectedChapters(bookId: string, affectedChapterNumbers: number[]): Promise<void> {
+    const index = await this.loadChapterIndex(bookId);
+    const updatedIndex = index.map(chapter => {
+      if (affectedChapterNumbers.includes(chapter.number)) {
+        return {
+          ...chapter,
+          status: "needs-audit" as const,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return chapter;
+    });
+    await this.saveChapterIndex(bookId, updatedIndex);
+  }
 }
+
 

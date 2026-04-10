@@ -1428,6 +1428,75 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Fix Chapter Order ---  
 
+  // --- Volume and Chapter Planning ---  
+
+  // Get volume outlines and chapter plans
+  app.get("/api/books/:id/volume-plans", async (c) => {
+    const id = c.req.param("id");
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const volumePlans = await pipeline.getVolumePlans(id);
+      return c.json({ ok: true, volumePlans });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Generate chapter plans for a specific volume
+  app.post("/api/books/:id/volumes/:volumeId/generate-plans", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = c.req.param("volumeId");
+
+    broadcast("volume:generate-plans:start", { bookId: id, volumeId });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const result = await pipeline.generateChapterPlansForVolume(id, volumeId);
+      broadcast("volume:generate-plans:complete", { bookId: id, volumeId });
+      return c.json({ ok: true, chapterPlans: result });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("volume:generate-plans:error", { bookId: id, volumeId, error });
+      return c.json({ error }, 500);
+    }
+  });
+
+  // Rewrite all chapters in a volume
+  app.post("/api/books/:id/volumes/:volumeId/rewrite-chapters", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = c.req.param("volumeId");
+
+    broadcast("volume:rewrite-chapters:start", { bookId: id, volumeId });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const result = await pipeline.regenerateVolumeChapters(id, volumeId);
+      broadcast("volume:rewrite-chapters:complete", { bookId: id, volumeId, chapters: result.chapters.length });
+      return c.json({ ok: true, chapters: result.chapters });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("volume:rewrite-chapters:error", { bookId: id, volumeId, error });
+      return c.json({ error }, 500);
+    }
+  });
+
+  // Mark affected chapters
+  app.post("/api/books/:id/volumes/:volumeId/mark-affected", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = c.req.param("volumeId");
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const result = await pipeline.markAffectedChapters(id, volumeId);
+      return c.json({ ok: true, affectedChapters: result });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Fix Chapter Order ---  
+
   app.post("/api/books/:id/chapters/fix-order", async (c) => {
     const id = c.req.param("id");
 
