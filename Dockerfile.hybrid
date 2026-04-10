@@ -3,10 +3,13 @@
 # 同时支持 Web UI 和 Agent API
 # ==========================================
 
-# 阶段一：依赖安装和构建
-FROM node:20-alpine AS builder
+# 使用国内镜像源（阿里云）
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS builder
 
 WORKDIR /app
+
+# 配置 npm 使用国内镜像
+RUN npm config set registry https://registry.npmmirror.com
 
 # 安装 pnpm
 RUN npm install -g pnpm
@@ -29,9 +32,12 @@ RUN pnpm run build
 # ==========================================
 # 阶段二：Studio Web 服务
 # ==========================================
-FROM node:20-alpine AS studio
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS studio
 
 WORKDIR /app
+
+# 配置 npm 使用国内镜像
+RUN npm config set registry https://registry.npmmirror.com
 
 # 安装 pnpm
 RUN npm install -g pnpm
@@ -60,9 +66,12 @@ CMD ["pnpm", "--filter", "@actalk/inkos-studio", "start"]
 # ==========================================
 # 阶段三：Agent API 服务
 # ==========================================
-FROM node:20-alpine AS agent
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS agent
 
 WORKDIR /app
+
+# 配置 npm 使用国内镜像
+RUN npm config set registry https://registry.npmmirror.com
 
 # 安装 pnpm
 RUN npm install -g pnpm
