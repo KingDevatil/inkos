@@ -1091,6 +1091,70 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
                     </ul>
                   </div>
 
+                  <div>
+                    <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+                      章节状态说明
+                    </h3>
+                    <p className="text-muted-foreground mb-3">章节在其生命周期中会经历以下状态：</p>
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 rounded bg-slate-100">
+                          <span className="font-medium text-slate-700">card-generated</span>
+                          <span className="text-slate-500 ml-2">卡片已生成</span>
+                        </div>
+                        <div className="p-2 rounded bg-blue-50">
+                          <span className="font-medium text-blue-600">drafting</span>
+                          <span className="text-blue-500 ml-2">创作中</span>
+                        </div>
+                        <div className="p-2 rounded bg-blue-50">
+                          <span className="font-medium text-blue-600">drafted</span>
+                          <span className="text-blue-500 ml-2">已创作</span>
+                        </div>
+                        <div className="p-2 rounded bg-purple-50">
+                          <span className="font-medium text-purple-600">auditing</span>
+                          <span className="text-purple-500 ml-2">审核中</span>
+                        </div>
+                        <div className="p-2 rounded bg-emerald-50">
+                          <span className="font-medium text-emerald-600">audit-passed</span>
+                          <span className="text-emerald-500 ml-2">审核通过</span>
+                        </div>
+                        <div className="p-2 rounded bg-red-50">
+                          <span className="font-medium text-red-600">audit-failed</span>
+                          <span className="text-red-500 ml-2">审核失败</span>
+                        </div>
+                        <div className="p-2 rounded bg-amber-50">
+                          <span className="font-medium text-amber-600">state-degraded</span>
+                          <span className="text-amber-500 ml-2">状态降级</span>
+                        </div>
+                        <div className="p-2 rounded bg-orange-50">
+                          <span className="font-medium text-orange-600">revising</span>
+                          <span className="text-orange-500 ml-2">修订中</span>
+                        </div>
+                        <div className="p-2 rounded bg-yellow-50">
+                          <span className="font-medium text-yellow-600">ready-for-review</span>
+                          <span className="text-yellow-500 ml-2">待审核</span>
+                        </div>
+                        <div className="p-2 rounded bg-teal-50">
+                          <span className="font-medium text-teal-600">approved</span>
+                          <span className="text-teal-500 ml-2">已批准</span>
+                        </div>
+                        <div className="p-2 rounded bg-rose-50">
+                          <span className="font-medium text-rose-600">rejected</span>
+                          <span className="text-rose-500 ml-2">已拒绝</span>
+                        </div>
+                        <div className="p-2 rounded bg-indigo-50">
+                          <span className="font-medium text-indigo-600">published</span>
+                          <span className="text-indigo-500 ml-2">已发布</span>
+                        </div>
+                        <div className="p-2 rounded bg-gray-50">
+                          <span className="font-medium text-gray-600">imported</span>
+                          <span className="text-gray-500 ml-2">已导入</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="p-4 bg-blue-50/50 border border-blue-200 rounded-lg">
                     <h3 className="text-base font-bold mb-2 text-blue-700">配置建议</h3>
                     <ul className="list-disc list-inside space-y-1 text-blue-600/80 text-xs ml-2">

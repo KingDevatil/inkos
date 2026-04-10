@@ -25,7 +25,12 @@ import {
   Sparkles,
   Trash2,
   Save,
-  ChevronDown
+  ChevronDown,
+  Edit3,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Send
 } from "lucide-react";
 
 interface ChapterMeta {
@@ -62,22 +67,37 @@ interface Nav {
 
 function translateChapterStatus(status: string, t: TFunction): string {
   const map: Record<string, () => string> = {
+    "card-generated": () => t("chapter.cardGenerated"),
+    "drafting": () => t("chapter.drafting"),
+    "drafted": () => t("chapter.drafted"),
+    "auditing": () => t("chapter.auditing"),
+    "audit-passed": () => t("chapter.auditPassed"),
+    "audit-failed": () => t("chapter.auditFailed"),
+    "state-degraded": () => t("chapter.stateDegraded"),
+    "revising": () => t("chapter.revising"),
     "ready-for-review": () => t("chapter.readyForReview"),
     "approved": () => t("chapter.approved"),
-    "drafted": () => t("chapter.drafted"),
-    "needs-revision": () => t("chapter.needsRevision"),
+    "rejected": () => t("chapter.rejected"),
+    "published": () => t("chapter.published"),
     "imported": () => t("chapter.imported"),
-    "audit-failed": () => t("chapter.auditFailed"),
   };
   return map[status]?.() ?? status;
 }
 
 const STATUS_CONFIG: Record<string, { color: string; icon: React.ReactNode }> = {
-  "ready-for-review": { color: "text-amber-500 bg-amber-500/10", icon: <Eye size={12} /> },
-  approved: { color: "text-emerald-500 bg-emerald-500/10", icon: <Check size={12} /> },
-  drafted: { color: "text-muted-foreground bg-muted/20", icon: <FileText size={12} /> },
-  "needs-revision": { color: "text-destructive bg-destructive/10", icon: <RotateCcw size={12} /> },
-  imported: { color: "text-blue-500 bg-blue-500/10", icon: <Download size={12} /> },
+  "card-generated": { color: "text-slate-600 bg-slate-100", icon: <FileText size={12} /> },
+  "drafting": { color: "text-blue-600 bg-blue-50", icon: <Edit3 size={12} /> },
+  "drafted": { color: "text-blue-600 bg-blue-50", icon: <FileText size={12} /> },
+  "auditing": { color: "text-purple-600 bg-purple-50", icon: <Search size={12} /> },
+  "audit-passed": { color: "text-emerald-600 bg-emerald-50", icon: <CheckCircle size={12} /> },
+  "audit-failed": { color: "text-red-600 bg-red-50", icon: <XCircle size={12} /> },
+  "state-degraded": { color: "text-amber-600 bg-amber-50", icon: <AlertTriangle size={12} /> },
+  "revising": { color: "text-orange-600 bg-orange-50", icon: <RotateCcw size={12} /> },
+  "ready-for-review": { color: "text-yellow-600 bg-yellow-50", icon: <Eye size={12} /> },
+  "approved": { color: "text-teal-600 bg-teal-50", icon: <Check size={12} /> },
+  "rejected": { color: "text-rose-600 bg-rose-50", icon: <X size={12} /> },
+  "published": { color: "text-indigo-600 bg-indigo-50", icon: <Send size={12} /> },
+  "imported": { color: "text-gray-600 bg-gray-50", icon: <Download size={12} /> },
 };
 
 export function BookDetail({
@@ -1448,6 +1468,70 @@ export function BookDetail({
                       <li><strong>转折词密度</strong>：控制"但是"、"然而"等转折词的使用频率</li>
                       <li><strong>对话密度</strong>：控制对话在章节中的占比</li>
                     </ul>
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+                      章节状态说明
+                    </h3>
+                    <p className="text-muted-foreground mb-3">章节在其生命周期中会经历以下状态：</p>
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 rounded bg-slate-100">
+                          <span className="font-medium text-slate-700">card-generated</span>
+                          <span className="text-slate-500 ml-2">卡片已生成</span>
+                        </div>
+                        <div className="p-2 rounded bg-blue-50">
+                          <span className="font-medium text-blue-600">drafting</span>
+                          <span className="text-blue-500 ml-2">创作中</span>
+                        </div>
+                        <div className="p-2 rounded bg-blue-50">
+                          <span className="font-medium text-blue-600">drafted</span>
+                          <span className="text-blue-500 ml-2">已创作</span>
+                        </div>
+                        <div className="p-2 rounded bg-purple-50">
+                          <span className="font-medium text-purple-600">auditing</span>
+                          <span className="text-purple-500 ml-2">审核中</span>
+                        </div>
+                        <div className="p-2 rounded bg-emerald-50">
+                          <span className="font-medium text-emerald-600">audit-passed</span>
+                          <span className="text-emerald-500 ml-2">审核通过</span>
+                        </div>
+                        <div className="p-2 rounded bg-red-50">
+                          <span className="font-medium text-red-600">audit-failed</span>
+                          <span className="text-red-500 ml-2">审核失败</span>
+                        </div>
+                        <div className="p-2 rounded bg-amber-50">
+                          <span className="font-medium text-amber-600">state-degraded</span>
+                          <span className="text-amber-500 ml-2">状态降级</span>
+                        </div>
+                        <div className="p-2 rounded bg-orange-50">
+                          <span className="font-medium text-orange-600">revising</span>
+                          <span className="text-orange-500 ml-2">修订中</span>
+                        </div>
+                        <div className="p-2 rounded bg-yellow-50">
+                          <span className="font-medium text-yellow-600">ready-for-review</span>
+                          <span className="text-yellow-500 ml-2">待审核</span>
+                        </div>
+                        <div className="p-2 rounded bg-teal-50">
+                          <span className="font-medium text-teal-600">approved</span>
+                          <span className="text-teal-500 ml-2">已批准</span>
+                        </div>
+                        <div className="p-2 rounded bg-rose-50">
+                          <span className="font-medium text-rose-600">rejected</span>
+                          <span className="text-rose-500 ml-2">已拒绝</span>
+                        </div>
+                        <div className="p-2 rounded bg-indigo-50">
+                          <span className="font-medium text-indigo-600">published</span>
+                          <span className="text-indigo-500 ml-2">已发布</span>
+                        </div>
+                        <div className="p-2 rounded bg-gray-50">
+                          <span className="font-medium text-gray-600">imported</span>
+                          <span className="text-gray-500 ml-2">已导入</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="p-4 bg-blue-50/50 border border-blue-200 rounded-lg">
