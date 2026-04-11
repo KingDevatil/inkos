@@ -1065,7 +1065,13 @@ export function BookDetail({
                                 查看卷纲
                               </button>
                               <button
-                                onClick={() => viewChapterPlans(volume.volumeId)}
+                                onClick={() => {
+                                  if (plansStatus?.allGenerated || plansStatus?.hasSomeGenerated) {
+                                    viewChapterPlans(volume.volumeId);
+                                  } else {
+                                    generateChapterPlansForVolume(volume.volumeId);
+                                  }
+                                }}
                                 className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
                               >
                                 <List size={14} />
@@ -2317,8 +2323,8 @@ export function BookDetail({
 
       {/* Custom Alert Dialog */}
       {showAlert && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" style={{ maxHeight: '100vh' }}>
-          <div className="bg-card rounded-xl max-w-md w-full overflow-hidden flex flex-col relative z-[101]">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <div className="bg-card rounded-xl max-w-md w-full overflow-hidden flex flex-col relative" style={{ zIndex: 10000 }}>
             <div className="flex items-center justify-between p-6 border-b border-border/40 shrink-0">
               <h3 className="text-xl font-bold">提示</h3>
               <button
@@ -2345,8 +2351,8 @@ export function BookDetail({
 
       {/* Custom Confirm Dialog */}
       {showConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" style={{ maxHeight: '100vh' }}>
-          <div className="bg-card rounded-xl max-w-md w-full overflow-hidden flex flex-col relative z-[101]">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <div className="bg-card rounded-xl max-w-md w-full overflow-hidden flex flex-col relative" style={{ zIndex: 10000 }}>
             <div className="flex items-center justify-between p-6 border-b border-border/40 shrink-0">
               <h3 className="text-xl font-bold">{confirmTitle}</h3>
               <button
