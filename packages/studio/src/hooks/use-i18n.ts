@@ -320,7 +320,7 @@ export function useI18n() {
   const lang: Lang = data?.language === "en" ? "en" : "zh";
 
   function t(key: StringKey): string {
-    return strings[key][lang];
+    return strings[key]?.[lang] || key;
   }
 
   return { t, lang };
