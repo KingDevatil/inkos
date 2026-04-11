@@ -1,0 +1,100 @@
+# ==========================================
+# InkOS Hybrid Docker Image
+# 同时支持 Web UI 和 Agent API
+# ==========================================
+
+# 使用国内镜像源（阿里云）
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS builder
+
+WORKDIR /app
+
+# 配置 npm 使用国内镜像
+RUN npm config set registry https://registry.npmmirror.com
+
+# 安装 pnpm
+RUN npm install -g pnpm
+
+# 复制 workspace 配置文件
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY packages/cli/package.json ./packages/cli/
+COPY packages/core/package.json ./packages/core/
+COPY packages/studio/package.json ./packages/studio/
+
+# 安装所有依赖
+RUN pnpm install --frozen-lockfile
+
+# 复制源码
+COPY . .
+
+# 构建所有包
+RUN pnpm run build
+
+# ==========================================
+# 阶段二：Studio Web 服务
+# ==========================================
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS studio
+
+WORKDIR /app
+
+# 配置 npm 使用国内镜像
+RUN npm config set registry https://registry.npmmirror.com
+
+# 安装 pnpm
+RUN npm install -g pnpm
+
+# 从构建阶段复制产物
+COPY --from=builder /app/packages/cli/dist ./packages/cli/dist
+COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder /app/packages/studio/dist ./packages/studio/dist
+COPY --from=builder /app/packages/studio/package.json ./packages/studio/
+COPY --from=builder /app/package.json /app/pnpm-workspace.yaml ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# 创建数据目录
+RUN mkdir -p /app/books /app/.config/inkos /app/logs
+
+# 初始化项目配置
+RUN echo '{"name":"InkOS Studio","language":"zh","llm":{"provider":"openai","model":"gpt-4","baseUrl":"https://api.openai.com/v1","apiKey":"","temperature":0.7,"maxTokens":4000,"stream":true},"daemon":{"enabled":false,"maxConcurrentBooks":1,"chaptersPerCycle":1,"schedule":{"radarCron":"0 */6 * * *","writeCron":"0 * * * *"},"retryDelayMs":60000,"cooldownAfterChapterMs":30000,"maxChaptersPerDay":24},"notify":[]}' > /app/books/inkos.json
+
+# 暴露端口
+EXPOSE 3000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/doctor || exit 1
+
+# 启动命令
+ENV INKOS_PROJECT_ROOT=/app/books
+ENV INKOS_STUDIO_PORT=3000
+CMD ["pnpm", "--filter", "@actalk/inkos-studio", "start"]
+
+# ==========================================
+# 阶段三：Agent API 服务
+# ==========================================
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS agent
+
+WORKDIR /app
+
+# 配置 npm 使用国内镜像
+RUN npm config set registry https://registry.npmmirror.com
+
+# 安装 pnpm
+RUN npm install -g pnpm
+
+# 从构建阶段复制产物
+COPY --from=builder /app/packages/cli/dist ./packages/cli/dist
+COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder /app/packages/studio/dist ./packages/studio/dist
+COPY --from=builder /app/packages/studio/package.json ./packages/studio/
+COPY --from=builder /app/package.json /app/pnpm-workspace.yaml ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# 创建数据目录
+RUN mkdir -p /app/books /app/.config/inkos /app/logs
+
+# 暴露端口
+EXPOSE 3001
+
+# 启动命令 - 仅启动 API 服务
+ENV INKOS_PROJECT_ROOT=/app/books
+CMD ["node", "./packages/studio/dist/api/agent-server.js", "--port", "3001"]

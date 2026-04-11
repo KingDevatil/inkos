@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Studio Web 服务 - 提供 Web UI
+  inkos-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile.hybrid
+      target: studio
+    container_name: inkos-studio
+    ports:
+      - "3000:3000"
+    volumes:
+      - inkos_books:/app/books
+      - inkos_config:/app/.config/inkos
+      - inkos_logs:/app/logs
+    environment:
+      - INKOS_BOOKS_DIR=/app/books
+      - INKOS_CONFIG_DIR=/app/.config/inkos
+      - INKOS_LOG_LEVEL=info
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    networks:
+      - inkos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Agent API 服务 - 提供 REST API 供外部调用
+  inkos-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.hybrid
+      target: agent
+    container_name: inkos-agent
+    ports:
+      - "3001:3001"
+    volumes:
+      - inkos_books:/app/books
+      - inkos_config:/app/.config/inkos
+      - inkos_logs:/app/logs
+    environment:
+      - INKOS_BOOKS_DIR=/app/books
+      - INKOS_CONFIG_DIR=/app/.config/inkos
+      - INKOS_AGENT_PORT=3001
+      - INKOS_LOG_LEVEL=info
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    networks:
+      - inkos-network
+    restart: unless-stopped
+    depends_on:
+      inkos-studio:
+        condition: service_healthy
+
+  # Nginx 反向代理 - 统一入口
+  nginx:
+    image: nginx:alpine
+    container_name: inkos-nginx
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - inkos-studio
+      - inkos-agent
+    networks:
+      - inkos-network
+    restart: unless-stopped
+
+volumes:
+  inkos_books:
+    driver: local
+  inkos_config:
+    driver: local
+  inkos_logs:
+    driver: local
+
+networks:
+  inkos-network:
+    driver: bridge
