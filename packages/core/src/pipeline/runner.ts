@@ -987,11 +987,21 @@ export class PipelineRunner {
     const startChapter = parseInt(match[1], 10);
     const endChapter = parseInt(match[2], 10);
 
+    this.logInfo(stageLanguage, {
+      zh: `第 ${volumeId} 卷章节范围：第${startChapter}-${endChapter}章，共${endChapter - startChapter + 1}章`,
+      en: `Volume ${volumeId} chapter range: chapters ${startChapter}-${endChapter}, total ${endChapter - startChapter + 1} chapters`,
+    });
+
     // 生成章节规划
     for (let chapterNumber = startChapter; chapterNumber <= endChapter; chapterNumber++) {
       if (chapterNumber > book.targetChapters) break;
 
       try {
+        this.logInfo(stageLanguage, {
+          zh: `正在生成第 ${chapterNumber} 章规划...`,
+          en: `Generating plan for chapter ${chapterNumber}...`,
+        });
+
         const planner = new PlannerAgent(this.config);
         await planner.planChapter({
           book,
@@ -1000,21 +1010,21 @@ export class PipelineRunner {
         });
 
         this.logInfo(stageLanguage, {
-          zh: `已生成第 ${chapterNumber} 章规划`,
-          en: `Generated plan for chapter ${chapterNumber}`,
+          zh: `✓ 已生成第 ${chapterNumber} 章规划`,
+          en: `✓ Generated plan for chapter ${chapterNumber}`,
         });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         this.logWarn(stageLanguage, {
-          zh: `生成第 ${chapterNumber} 章规划失败：${detail}`,
-          en: `Failed to generate plan for chapter ${chapterNumber}: ${detail}`,
+          zh: `✗ 生成第 ${chapterNumber} 章规划失败：${detail}`,
+          en: `✗ Failed to generate plan for chapter ${chapterNumber}: ${detail}`,
         });
       }
     }
 
     this.logInfo(stageLanguage, {
-      zh: "章节规划生成完成",
-      en: "Chapter plans generated successfully",
+      zh: `第 ${volumeId} 卷章节规划生成完成`,
+      en: `Chapter plans for volume ${volumeId} generated successfully`,
     });
   }
 

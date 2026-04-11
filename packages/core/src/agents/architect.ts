@@ -920,6 +920,364 @@ ${trimmed}\n`;
 ${trimmed}\n`;
   }
 
+  async generateVolumeDetail(
+    book: BookConfig,
+    bookDir: string,
+    volumeId: number,
+  ): Promise<{ readonly volumeDetail: string }> {
+    const { profile: gp, body: genreBody } =
+      await readGenreProfile(this.ctx.projectRoot, book.genre);
+    const resolvedLanguage = book.language ?? gp.language;
+
+    // 读取现有卷纲
+    const existingOutline = await this.readFileSafe(join(bookDir, "story/volume_outline.md"));
+    
+    // 解析卷纲，提取目标卷的信息
+    const targetVolumeInfo = this.extractVolumeInfo(existingOutline, volumeId);
+    
+    // 读取故事设定和书籍规则
+    const storyBible = await this.readFileSafe(join(bookDir, "story/story_bible.md"));
+    const bookRules = await this.readFileSafe(join(bookDir, "story/book_rules.md"));
+
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web fiction architect. Your task is to generate a detailed outline for a specific volume.
+
+## Story Bible
+${storyBible}
+
+## Book Rules
+${bookRules}
+
+## Volume Outline
+${existingOutline}
+
+## Target Volume
+${targetVolumeInfo}
+
+## Requirements
+1. Generate a detailed outline for the target volume
+2. Include chapter-by-chapter breakdown (3-5 chapters per group)
+3. Define core conflicts, turning points, and payoff goals for each chapter group
+4. Ensure smooth transitions between chapters
+5. Follow the golden first three chapters rule if this is volume 1
+6. Maintain consistency with the story bible and book rules
+7. Include character development arcs within the volume
+8. Define cliffhangers for each chapter group
+
+Output only the detailed volume outline in Markdown format, using the following structure:
+
+### Volume {N}: {Title}
+
+**Chapter Range**: {start}-{end}
+
+**Core Conflict**: {conflict}
+
+**Chapter Groups**:
+- Chapters {start}-{start+2}: {group1 title}
+  - Core events: ...
+  - Turning points: ...
+  - Cliffhanger: ...
+  
+- Chapters {start+3}-{start+5}: {group2 title}
+  - ...
+
+**Character Development**: {character arcs}
+
+**Payoff Goals**: {goals}`
+      : `你是一个专业的网络小说架构师。你的任务是为特定分卷生成详细的卷纲。
+
+## 故事设定
+${storyBible}
+
+## 书籍规则
+${bookRules}
+
+## 总体卷纲
+${existingOutline}
+
+## 目标分卷
+${targetVolumeInfo}
+
+## 要求
+1. 生成目标分卷的详细卷纲
+2. 包含逐章分解（每 3-5 章为一组）
+3. 为每组章节定义核心冲突、转折点和收益目标
+4. 确保章节间的过渡自然流畅
+5. 如果是第一卷，遵循黄金三章法则
+6. 保持与故事设定和书籍规则的一致性
+7. 包含本卷内的角色发展弧线
+8. 为每组章节定义悬念钩子
+
+只输出详细的分卷卷纲，使用 Markdown 格式，结构如下：
+
+### 第{N}卷：{卷名}
+
+**章节范围**：{start}-{end}
+
+**核心冲突**：{冲突}
+
+**章节分组**：
+- 第{start}-{start+2} 章：{第一组标题}
+  - 核心事件：...
+  - 关键转折：...
+  - 悬念钩子：...
+  
+- 第{start+3}-{start+5} 章：{第二组标题}
+  - ...
+
+**角色发展**：{角色弧线}
+
+**收益目标**：{目标}`;
+
+    const response = await this.chat([
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: resolvedLanguage === "en"
+          ? `Please generate a detailed outline for volume ${volumeId}.`
+          : `请生成第${volumeId}卷的详细卷纲。`,
+      },
+    ], { maxTokens: 8192, temperature: 0.7 });
+
+    return { volumeDetail: response.content.trim() };
+  }
+
+  private extractVolumeInfo(outline: string, volumeId: number): string {
+    const lines = outline.split("\n");
+    let currentVolume = "";
+    let found = false;
+    let volumeContent = "";
+    
+    const volumePattern = new RegExp(`第.*?${volumeId}卷 | 卷${volumeId}|Volume\\s*${volumeId}`, "i");
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      
+      if (line.startsWith("#") && volumePattern.test(line)) {
+        if (found) {
+          break;
+        }
+        found = true;
+        currentVolume = line + "\n";
+      } else if (found) {
+        if (line.startsWith("#") && line.includes("卷")) {
+          break;
+        }
+        currentVolume += line + "\n";
+      }
+    }
+    
+    return found ? currentVolume.trim() : `(Volume ${volumeId} not found in outline)`;
+  }
+
+  async parseVolumeOutline(
+    outlineContent: string,
+  ): Promise<{ readonly volumePlans: Array<{ volumeId: number; title: string; chapterRange: { start: number; end: number }; outline: string }> }> {
+    // 使用中文作为默认语言（因为卷纲通常是中文）
+    const resolvedLanguage: "zh" | "en" = outlineContent.includes("卷") ? "zh" : "en";
+
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web fiction architect. Your task is to parse a volume outline document and extract structured information.
+
+## Input Format
+The input is a Markdown document containing volume outlines. It may have various formats:
+- Table format with columns: Volume Name, Chapters, Core Conflict, etc.
+- Section format with headers like: ### Volume 1: Title (Chapters 1-50)
+- Mixed format with both tables and sections
+
+## Your Task
+Parse the document and extract each volume's information:
+1. Volume ID (1, 2, 3, ...)
+2. Volume Title
+3. Chapter Range (start and end)
+4. Volume Outline (the full content of that volume section)
+
+## Output Format
+Return ONLY a JSON object with this exact structure. No additional text, no markdown code blocks:
+{
+  "volumePlans": [
+    {
+      "volumeId": 1,
+      "title": "Volume Title",
+      "chapterRange": { "start": 1, "end": 50 },
+      "outline": "Full volume outline content..."
+    }
+  ]
+}
+
+Be flexible with format variations. If chapter range is not explicit, infer from context.
+IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
+      : `你是一个专业的网络小说架构师。你的任务是解析卷纲文档并提取结构化信息。
+
+## 输入格式
+输入是一个 Markdown 文档，包含卷纲内容。可能有多种格式：
+- 表格格式：卷名、章节、核心冲突等列
+- 分卷标题格式：### 第一卷：卷名（1-50 章）
+- 混合格式：表格 + 分卷标题
+
+## 你的任务
+解析文档并提取每个分卷的信息：
+1. 卷 ID（1, 2, 3, ...）
+2. 卷名
+3. 章节范围（起始和结束）
+4. 分卷卷纲（该分卷的完整内容）
+
+## 输出格式
+返回 ONLY 一个 JSON 对象，使用以下精确结构。不要额外文本，不要 markdown 代码块：
+{
+  "volumePlans": [
+    {
+      "volumeId": 1,
+      "title": "卷名",
+      "chapterRange": { "start": 1, "end": 50 },
+      "outline": "完整的分卷卷纲内容..."
+    }
+  ]
+}
+
+灵活处理各种格式变体。如果章节范围不明确，从上下文中推断。
+重要：只输出 JSON，不要解释，不要 markdown 格式。`;
+
+    const response = await this.chat([
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: resolvedLanguage === "en"
+          ? `Please parse this volume outline document:\n\n${outlineContent.substring(0, 8000)}`
+          : `请解析以下卷纲文档：\n\n${outlineContent.substring(0, 8000)}`,
+      },
+    ], { maxTokens: 4096, temperature: 0.1 });
+
+    // Parse the JSON response with multiple extraction strategies
+    const parsedResult = this.extractJsonFromResponse(response.content);
+    if (parsedResult && parsedResult.volumePlans && parsedResult.volumePlans.length > 0) {
+      return {
+        volumePlans: parsedResult.volumePlans.map((v: any) => ({
+          volumeId: v.volumeId || 0,
+          title: v.title || `第${v.volumeId}卷`,
+          chapterRange: v.chapterRange || { start: 0, end: 0 },
+          outline: v.outline || ""
+        }))
+      };
+    }
+
+    // Fallback to simple regex parsing
+    return { volumePlans: this.simpleParseVolumeOutline(outlineContent) };
+  }
+
+  private extractJsonFromResponse(content: string): any {
+    // Strategy 1: Try to find JSON object in the response
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      console.warn(`Strategy 1 failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Strategy 2: Remove markdown code blocks if present
+    try {
+      const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        const jsonContent = codeBlockMatch[1]?.trim();
+        if (jsonContent) {
+          return JSON.parse(jsonContent);
+        }
+      }
+    } catch (e) {
+      console.warn(`Strategy 2 failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Strategy 3: Try to extract array from text
+    try {
+      const arrayMatch = content.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        const parsed = JSON.parse(arrayMatch[0]);
+        if (Array.isArray(parsed)) {
+          return { volumePlans: parsed };
+        }
+      }
+    } catch (e) {
+      console.warn(`Strategy 3 failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Strategy 4: Try to find volumePlans key
+    try {
+      const volumePlansMatch = content.match(/"volumePlans"\s*:\s*([\s\S]*?)(?=,\s*"[^"]+"\s*:|\s*\}|\s*$)/);
+      if (volumePlansMatch) {
+        const jsonStr = `{ "volumePlans": ${volumePlansMatch[1]} }`;
+        return JSON.parse(jsonStr);
+      }
+    } catch (e) {
+      console.warn(`Strategy 4 failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    return null;
+  }
+
+  private simpleParseVolumeOutline(outlineContent: string): Array<{ volumeId: number; title: string; chapterRange: { start: number; end: number }; outline: string }> {
+    const volumePlans: Array<{ volumeId: number; title: string; chapterRange: { start: number; end: number }; outline: string }> = [];
+    const lines = outlineContent.split("\n");
+    const chineseNumbers = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+    
+    const patterns = [
+      /^#{2,4}\s*第.*?卷 [：:]([^(]+)[（(](\d+)-(\d+) 章 [)）]/,
+      /^#{2,4}\s*第.*?卷 [：:]([^(]+)[（(](?:第)?(\d+)-(\d+) 章 [)）]/,
+      /^#{2,4}\s*第.*?卷 [：:]([^(]+)$/,
+      /^#{2,4}\s*卷 ([一二三四五六七八九十\d]+)[：:]\s*(.+?)$/,
+      /^#{2,4}\s*Volume\s+(\d+)[：:]\s*(.+?)$/i
+    ];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      
+      for (const pattern of patterns) {
+        const match = line.match(pattern);
+        if (match) {
+          let volumeId: number;
+          let title: string;
+          let chapterStart = 0;
+          let chapterEnd = 0;
+          
+          if (pattern.source.includes('Volume')) {
+            volumeId = parseInt(match[1], 10);
+            title = match[2]?.trim() || '';
+          } else if (pattern.source.includes('卷 ([一二三四五六七八九十\\d]+)')) {
+            const numStr = match[1];
+            volumeId = chineseNumbers.indexOf(numStr) || parseInt(numStr, 10) || 1;
+            title = match[2]?.trim() || '';
+          } else {
+            const titlePart = match[1]?.trim() || '';
+            const titleMatch = titlePart.match(/([一二三四五六七八九十\d]+)[·.:\s:](.+)/);
+            if (titleMatch) {
+              const numStr = titleMatch[1];
+              volumeId = chineseNumbers.indexOf(numStr) || parseInt(numStr, 10) || volumePlans.length + 1;
+              title = titleMatch[2]?.trim() || titlePart;
+            } else {
+              volumeId = volumePlans.length + 1;
+              title = titlePart;
+            }
+            if (match[2] && /^\d+$/.test(match[2])) {
+              chapterStart = parseInt(match[2], 10);
+              chapterEnd = parseInt(match[3] || '0', 10);
+            }
+          }
+          
+          volumePlans.push({
+            volumeId,
+            title,
+            chapterRange: { start: chapterStart, end: chapterEnd },
+            outline: ""
+          });
+          break;
+        }
+      }
+    }
+    
+    return volumePlans;
+  }
+
   private parseSections(content: string): ArchitectOutput {
     const parsedSections = new Map<string, string>();
     

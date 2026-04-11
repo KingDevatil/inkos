@@ -16,10 +16,11 @@ import {
   type LogEntry,
   type ChapterMeta,
 } from "@actalk/inkos-core";
-import { access, readFile, writeFile, readdir, unlink, rename, mkdir } from "node:fs/promises";
+import { access, readFile, writeFile, readdir, unlink, rename, mkdir, stat } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
@@ -1627,34 +1628,131 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // --- Volume and Chapter Planning ---  
 
   // Get volume outlines and chapter plans
+  // Persistent storage for volume plans metadata (per book, in story directory)
+  let volumePlansMeta: any = {};
+  let metaInitialized = false;
+  
+  // Initialize metadata storage
+  const initVolumePlansMeta = async () => {
+    if (metaInitialized) return;
+    
+    try {
+      // Load all existing metadata from book story directories
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const booksDir = pipeline["state"].booksDir;
+      
+      if (existsSync(booksDir)) {
+        const books = await readdir(booksDir);
+        for (const book of books) {
+          const bookMetaPath = join(booksDir, book, "story", ".volume-plans-meta.json");
+          if (existsSync(bookMetaPath)) {
+            const content = await readFile(bookMetaPath, "utf-8");
+            volumePlansMeta[book] = JSON.parse(content);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to initialize volume plans metadata:", e);
+    }
+    
+    metaInitialized = true;
+  };
+  
+  // Save metadata to file (per book)
+  const saveVolumePlansMeta = async (bookId: string) => {
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(bookId);
+      const bookMetaPath = join(bookDir, "story", ".volume-plans-meta.json");
+      
+      await writeFile(bookMetaPath, JSON.stringify(volumePlansMeta[bookId], null, 2), "utf-8");
+    } catch (e) {
+      console.error("Failed to save volume plans metadata:", e);
+    }
+  };
+
   app.get("/api/books/:id/volume-plans", async (c) => {
     const id = c.req.param("id");
 
+    // Initialize metadata storage
+    await initVolumePlansMeta();
+
+    // Check if we have cached metadata for this book
+    const bookMeta = volumePlansMeta[id];
+    if (bookMeta) {
+      // Return cached metadata with generation status
+      return c.json({ 
+        ok: true, 
+        volumePlans: bookMeta.volumePlans.map((vp: any) => ({
+          ...vp,
+          detailOutlineGenerated: vp.detailOutlineGenerated
+        })),
+        fromCache: true
+      });
+    }
+
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const book = await pipeline["state"].loadBookConfig(id);
       const bookDir = pipeline["state"].bookDir(id);
       const outlinePath = join(bookDir, "story", "volume_outline.md");
       
       try {
         const outlineContent = await readFile(outlinePath, "utf-8");
-        // Simple parsing to extract volume information
-        const volumeRegex = /### 第 (\d+) 卷 ([^\n]+)[\s\S]*?章节范围：(\d+)-(\d+)[\s\S]*?([\s\S]*?)(?=### 第\d+ 卷|$)/g;
-        const volumePlans = [];
-        let match;
         
-        while ((match = volumeRegex.exec(outlineContent)) !== null) {
-          volumePlans.push({
-            volumeId: parseInt(match[1], 10),
-            title: match[2]?.trim() || `第${match[1]}卷`,
-            chapterRange: {
-              start: parseInt(match[3], 10),
-              end: parseInt(match[4], 10)
-            },
-            outline: match[5]?.trim() || ""
-          });
-        }
+        // 使用 ArchitectAgent 辅助解析卷纲
+        const { ArchitectAgent } = await import("@actalk/inkos-core");
+        const ctx = {
+          client: createLLMClient(cachedConfig.llm),
+          model: cachedConfig.llm.model,
+          projectRoot: root,
+          bookId: id,
+          logger: createLogger({ tag: "architect", sinks: [sseSink] }),
+        };
+        const architect = new ArchitectAgent(ctx);
         
-        return c.json({ ok: true, volumePlans, totalOutline: outlineContent });
+        // 调用 ArchitectAgent 解析卷纲
+        const parsedResult = await architect.parseVolumeOutline(outlineContent);
+        
+        // Check for existing volume detail files and update metadata
+        const volumePlansWithStatus = await Promise.all(parsedResult.volumePlans.map(async (vp: any) => {
+          const volumeDetailPath = join(bookDir, "story", `volume_${vp.volumeId}_detail.md`);
+          let detailOutlineGenerated = false;
+          let detailOutlineFile: string | undefined;
+          
+          try {
+            await stat(volumeDetailPath);
+            // File exists, mark as generated
+            detailOutlineGenerated = true;
+            detailOutlineFile = `volume_${vp.volumeId}_detail.md`;
+          } catch {
+            // File doesn't exist
+            detailOutlineGenerated = false;
+          }
+          
+          return {
+            volumeId: vp.volumeId,
+            title: vp.title,
+            chapterRange: vp.chapterRange,
+            detailOutlineGenerated,
+            detailOutlineFile,
+            lastGeneratedAt: detailOutlineGenerated ? new Date().toISOString() : undefined
+          };
+        }));
+        
+        // Save metadata to persistent storage
+        volumePlansMeta[id] = {
+          volumePlans: volumePlansWithStatus,
+          lastParsedAt: new Date().toISOString()
+        };
+        await saveVolumePlansMeta(id);
+        
+        return c.json({ 
+          ok: true, 
+          volumePlans: volumePlansMeta[id].volumePlans,
+          totalOutline: outlineContent,
+          fromCache: false
+        });
       } catch {
         return c.json({ ok: true, volumePlans: [], totalOutline: "" });
       }
@@ -1701,6 +1799,232 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // Get specific volume detail outline (generated by ArchitectAgent)
+  app.get("/api/books/:id/volumes/:volumeId/detail-outline", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    try {
+      // Initialize metadata storage
+      await initVolumePlansMeta();
+
+      // Check if we have metadata for this book
+      const bookMeta = volumePlansMeta[id];
+      if (!bookMeta) {
+        return c.json({
+          ok: true,
+          volumeId,
+          exists: false,
+          content: null
+        });
+      }
+
+      // Find volume in metadata
+      const volumeMeta = bookMeta.volumePlans.find((vp: any) => vp.volumeId === volumeId);
+      if (!volumeMeta || !volumeMeta.detailOutlineGenerated || !volumeMeta.detailOutlineFile) {
+        return c.json({
+          ok: true,
+          volumeId,
+          exists: false,
+          content: null
+        });
+      }
+
+      // Read the file directly
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(id);
+      const volumeDetailPath = join(bookDir, "story", volumeMeta.detailOutlineFile);
+      
+      try {
+        const content = await readFile(volumeDetailPath, "utf-8");
+        
+        // File exists, ensure metadata is up to date
+        if (!volumeMeta.detailOutlineGenerated || volumeMeta.detailOutlineFile !== `volume_${volumeId}_detail.md`) {
+          volumeMeta.detailOutlineGenerated = true;
+          volumeMeta.detailOutlineFile = `volume_${volumeId}_detail.md`;
+          await saveVolumePlansMeta(id);
+        }
+        
+        return c.json({
+          ok: true,
+          volumeId,
+          exists: true,
+          content
+        });
+      } catch {
+        // File doesn't exist, update metadata
+        volumeMeta.detailOutlineGenerated = false;
+        delete volumeMeta.detailOutlineFile;
+        await saveVolumePlansMeta(id);
+        
+        return c.json({
+          ok: true,
+          volumeId,
+          exists: false,
+          content: null
+        });
+      }
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Get chapter plans for a specific volume
+  app.get("/api/books/:id/volumes/:volumeId/chapter-plans", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const book = await pipeline["state"].loadBookConfig(id);
+      const bookDir = pipeline["state"].bookDir(id);
+      
+      // Try to get chapter range from metadata first
+      let startChapter: number | null = null;
+      let endChapter: number | null = null;
+      
+      // Check metadata first
+      if (volumePlansMeta[id]) {
+        const volumeMeta = volumePlansMeta[id].volumePlans.find((vp: any) => vp.volumeId === volumeId);
+        if (volumeMeta && volumeMeta.chapterRange) {
+          startChapter = volumeMeta.chapterRange.start;
+          endChapter = volumeMeta.chapterRange.end;
+        }
+      }
+      
+      // Fallback to parsing outline file if metadata doesn't have the info
+      if (startChapter === null || endChapter === null) {
+        const volumeDetailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+        let outlineContent: string;
+        
+        try {
+          outlineContent = await readFile(volumeDetailPath, "utf-8");
+        } catch {
+          // Fallback to regular volume outline
+          const outlinePath = join(bookDir, "story", "volume_outline.md");
+          outlineContent = await readFile(outlinePath, "utf-8");
+        }
+        
+        // Parse chapter range from outline
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?(?:章节范围 | Chapter Range)[：:](\\d+)-(\\d+)`, "i");
+        const match = volumeRegex.exec(outlineContent);
+        if (!match) {
+          return c.json({ error: `Volume ${volumeId} chapter range not found` }, 404);
+        }
+        
+        startChapter = parseInt(match[1], 10);
+        endChapter = parseInt(match[2], 10);
+      }
+      
+      // Read chapter plans for this volume
+      const chapterPlans = [];
+      const runtimeDir = join(bookDir, "story", "runtime");
+      
+      for (let chapterNum = startChapter; chapterNum <= endChapter; chapterNum++) {
+        const chapterPlanPath = join(runtimeDir, `chapter-${String(chapterNum).padStart(4, "0")}.intent.md`);
+        try {
+          const content = await readFile(chapterPlanPath, "utf-8");
+          chapterPlans.push({
+            chapterNumber: chapterNum,
+            content
+          });
+        } catch {
+          // Chapter plan doesn't exist yet
+          chapterPlans.push({
+            chapterNumber: chapterNum,
+            content: null,
+            notGenerated: true
+          });
+        }
+      }
+      
+      return c.json({
+        ok: true,
+        volumeId,
+        chapterRange: { start: startChapter, end: endChapter },
+        chapterPlans
+      });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Check if chapter plans exist for a volume
+  app.get("/api/books/:id/volumes/:volumeId/chapter-plans-status", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const book = await pipeline["state"].loadBookConfig(id);
+      const bookDir = pipeline["state"].bookDir(id);
+      
+      // Try to get chapter range from metadata first
+      let startChapter: number | null = null;
+      let endChapter: number | null = null;
+      
+      // Check metadata first
+      if (volumePlansMeta[id]) {
+        const volumeMeta = volumePlansMeta[id].volumePlans.find((vp: any) => vp.volumeId === volumeId);
+        if (volumeMeta && volumeMeta.chapterRange) {
+          startChapter = volumeMeta.chapterRange.start;
+          endChapter = volumeMeta.chapterRange.end;
+        }
+      }
+      
+      // Fallback to parsing outline file if metadata doesn't have the info
+      if (startChapter === null || endChapter === null) {
+        const volumeDetailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+        let outlineContent: string;
+        
+        try {
+          outlineContent = await readFile(volumeDetailPath, "utf-8");
+        } catch {
+          // Fallback to regular volume outline
+          const outlinePath = join(bookDir, "story", "volume_outline.md");
+          outlineContent = await readFile(outlinePath, "utf-8");
+        }
+        
+        // Parse chapter range from outline
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?(?:章节范围 | Chapter Range)[：:](\\d+)-(\\d+)`, "i");
+        const match = volumeRegex.exec(outlineContent);
+        if (!match) {
+          return c.json({ error: `Volume ${volumeId} chapter range not found` }, 404);
+        }
+        
+        startChapter = parseInt(match[1], 10);
+        endChapter = parseInt(match[2], 10);
+      }
+      
+      // Check if all chapter plans exist
+      const runtimeDir = join(bookDir, "story", "runtime");
+      let allGenerated = true;
+      let generatedCount = 0;
+      
+      for (let chapterNum = startChapter; chapterNum <= endChapter; chapterNum++) {
+        const chapterPlanPath = join(runtimeDir, `chapter-${String(chapterNum).padStart(4, "0")}.intent.md`);
+        try {
+          await readFile(chapterPlanPath, "utf-8");
+          generatedCount++;
+        } catch {
+          allGenerated = false;
+        }
+      }
+      
+      return c.json({
+        ok: true,
+        volumeId,
+        chapterRange: { start: startChapter, end: endChapter },
+        totalChapters: endChapter - startChapter + 1,
+        generatedCount,
+        allGenerated,
+        hasSomeGenerated: generatedCount > 0
+      });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   // Rewrite specific volume outline
   app.post("/api/books/:id/volumes/:volumeId/rewrite-outline", async (c) => {
     const id = c.req.param("id");
@@ -1722,20 +2046,142 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // Generate detailed volume outline using ArchitectAgent
+  app.post("/api/books/:id/volumes/:volumeId/generate-detail", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    broadcast("volume:generate-detail:start", { bookId: id, volumeId });
+    broadcast("log", { 
+      level: "info", 
+      tag: "architect", 
+      message: `开始生成第${volumeId}卷详细卷纲...` 
+    });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const book = await pipeline["state"].loadBookConfig(id);
+      const bookDir = pipeline["state"].bookDir(id);
+      
+      // Use ArchitectAgent to generate detailed volume outline
+      const { ArchitectAgent } = await import("@actalk/inkos-core");
+      // Create a minimal context for the agent
+      const ctx = {
+        client: createLLMClient(cachedConfig.llm),
+        model: cachedConfig.llm.model,
+        projectRoot: root,
+        bookId: id,
+        logger: createLogger({ tag: "architect", sinks: [sseSink] }),
+      };
+      const architect = new ArchitectAgent(ctx);
+      
+      broadcast("log", { 
+        level: "info", 
+        tag: "architect", 
+        message: `ArchitectAgent 正在为第${volumeId}卷生成详细卷纲（包含章节分组、角色发展等）...` 
+      });
+      
+      const result = await architect.generateVolumeDetail(book, bookDir, volumeId);
+      
+      // Filter out <thinking> tags from LLM response
+      let filteredContent = result.volumeDetail;
+      const thinkingRegex = /<thinking>[\s\S]*?<\/thinking>/gi;
+      filteredContent = filteredContent.replace(thinkingRegex, "");
+      
+      // Save the generated volume detail to a separate file
+      const volumeDetailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+      await writeFile(volumeDetailPath, filteredContent, "utf-8");
+      
+      // Update metadata
+      if (volumePlansMeta[id]) {
+        const volumeMeta = volumePlansMeta[id].volumePlans.find((vp: any) => vp.volumeId === volumeId);
+        if (volumeMeta) {
+          volumeMeta.detailOutlineGenerated = true;
+          volumeMeta.detailOutlineFile = `volume_${volumeId}_detail.md`;
+          volumeMeta.lastGeneratedAt = new Date().toISOString();
+          await saveVolumePlansMeta(id);
+        }
+      }
+      
+      broadcast("log", { 
+        level: "success", 
+        tag: "architect", 
+        message: `第${volumeId}卷详细卷纲生成完成，已保存到 volume_${volumeId}_detail.md` 
+      });
+      
+      broadcast("volume:generate-detail:complete", { 
+        bookId: id, 
+        volumeId,
+        volumeDetail: result.volumeDetail 
+      });
+      
+      return c.json({ 
+        ok: true, 
+        volumeId,
+        volumeDetail: result.volumeDetail 
+      });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("log", { 
+        level: "error", 
+        tag: "architect", 
+        message: `第${volumeId}卷详细卷纲生成失败：${error}` 
+      });
+      broadcast("volume:generate-detail:error", { bookId: id, volumeId, error });
+      return c.json({ error }, 500);
+    }
+  });
+
   // Generate chapter plans for a specific volume
   app.post("/api/books/:id/volumes/:volumeId/generate-plans", async (c) => {
     const id = c.req.param("id");
     const volumeId = parseInt(c.req.param("volumeId"), 10);
 
     broadcast("volume:generate-plans:start", { bookId: id, volumeId });
+    broadcast("log", { 
+      level: "info", 
+      tag: "planner", 
+      message: `开始生成第${volumeId}卷章节规划...` 
+    });
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
+      
+      // 读取卷纲获取章节范围
+      const book = await pipeline["state"].loadBookConfig(id);
+      const bookDir = pipeline["state"].bookDir(id);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      const outlineContent = await readFile(outlinePath, "utf-8");
+      const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?(?:章节范围 | Chapter Range)[：:](\\d+)-(\\d+)`, "i");
+      const match = volumeRegex.exec(outlineContent);
+      
+      if (match) {
+        const startChapter = parseInt(match[1], 10);
+        const endChapter = parseInt(match[2], 10);
+        broadcast("log", { 
+          level: "info", 
+          tag: "planner", 
+          message: `第${volumeId}卷章节范围：第${startChapter}-${endChapter}章，共${endChapter - startChapter + 1}章` 
+        });
+      }
+      
       await pipeline.generateChapterPlansForVolume(id, volumeId);
+      
+      broadcast("log", { 
+        level: "success", 
+        tag: "planner", 
+        message: `第${volumeId}卷章节规划全部生成完成` 
+      });
+      
       broadcast("volume:generate-plans:complete", { bookId: id, volumeId });
       return c.json({ ok: true });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
+      broadcast("log", { 
+        level: "error", 
+        tag: "planner", 
+        message: `第${volumeId}卷章节规划生成失败：${error}` 
+      });
       broadcast("volume:generate-plans:error", { bookId: id, volumeId, error });
       return c.json({ error }, 500);
     }
@@ -1747,14 +2193,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const volumeId = parseInt(c.req.param("volumeId"), 10);
 
     broadcast("volume:rewrite-chapters:start", { bookId: id, volumeId });
+    broadcast("log", { 
+      level: "info", 
+      tag: "writer", 
+      message: `开始重写第${volumeId}卷所有章节...` 
+    });
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       await pipeline.regenerateVolumeChapters(id, volumeId);
+      
+      broadcast("log", { 
+        level: "success", 
+        tag: "writer", 
+        message: `第${volumeId}卷所有章节重写完成` 
+      });
+      
       broadcast("volume:rewrite-chapters:complete", { bookId: id, volumeId });
       return c.json({ ok: true });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
+      broadcast("log", { 
+        level: "error", 
+        tag: "writer", 
+        message: `第${volumeId}卷章节重写失败：${error}` 
+      });
       broadcast("volume:rewrite-chapters:error", { bookId: id, volumeId, error });
       return c.json({ error }, 500);
     }
