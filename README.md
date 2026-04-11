@@ -35,7 +35,8 @@ cd inkos
 # 运行自动安装脚本
 
 # Linux/Mac 用户
-./build.sh
+chmod +x build-install.sh
+./build-install.sh
 
 # Windows 用户
 powershell -ExecutionPolicy Bypass -File .\build-install.ps1
