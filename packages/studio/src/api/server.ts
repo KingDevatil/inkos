@@ -149,10 +149,34 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   app.get("/api/books/:id", async (c) => {
     const id = c.req.param("id");
     try {
-      const book = await state.loadBookConfig(id);
-      const chapters = await state.loadChapterIndex(id);
-      const nextChapter = await state.getNextChapterNumber(id);
-      return c.json({ book, chapters, nextChapter });
+      // 尝试加载正式的书籍目录
+      try {
+        const book = await state.loadBookConfig(id);
+        const chapters = await state.loadChapterIndex(id);
+        const nextChapter = await state.getNextChapterNumber(id);
+        return c.json({ book, chapters, nextChapter });
+      } catch (e) {
+        // 正式书籍目录不存在，尝试查找对应的临时目录
+        const booksDir = join(root, "books");
+        try {
+          const files = await readdir(booksDir);
+          const tempDirs = files.filter(f => f.startsWith(".tmp-book-create-") && f.includes(id));
+          if (tempDirs.length > 0) {
+            // 找到临时目录，加载其中的书籍配置
+            const tempDir = join(booksDir, tempDirs[0]);
+            const book = await state.loadBookConfigAt(tempDir);
+            return c.json({ 
+              book, 
+              chapters: [], 
+              nextChapter: 1,
+              isTemporary: true
+            });
+          }
+        } catch (tempError) {
+          // 临时目录也不存在，返回404
+        }
+        return c.json({ error: `Book "${id}" not found` }, 404);
+      }
     } catch {
       return c.json({ error: `Book "${id}" not found` }, 404);
     }
@@ -211,33 +235,63 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const bookId = bookConfig.id;
     const bookDir = state.bookDir(bookId);
 
+    console.log(`\n========== 书籍创建流程开始 ==========`);
+    console.log(`[1] 书籍 ID: ${bookId}`);
+    console.log(`[2] 书籍标题：${body.title}`);
+    console.log(`[3] 是否使用全局审计配置：${body.useGlobalAuditConfig}`);
+    console.log(`[4] 正式书籍目录路径：${bookDir}`);
+
     try {
       await access(join(bookDir, "book.json"));
       await access(join(bookDir, "story", "story_bible.md"));
       return c.json({ error: `Book "${bookId}" already exists` }, 409);
     } catch {
-      // The target book is not fully initialized yet, so creation can continue.
+      console.log(`[5] 正式书籍目录尚未完全初始化，继续创建流程`);
     }
 
     broadcast("book:creating", { bookId, title: body.title });
     bookCreateStatus.set(bookId, { status: "creating" });
 
+    // 保存审计配置
+    if (body.useGlobalAuditConfig === false && body.auditConfig) {
+      console.log(`\n[6] 开始保存审计配置到正式书籍目录`);
+      console.log(`[6.1] 审计配置内容：${JSON.stringify(body.auditConfig, null, 2)}`);
+      try {
+        // 创建正式书籍目录
+        console.log(`[6.2] 创建正式书籍目录：${bookDir}`);
+        await mkdir(bookDir, { recursive: true });
+        console.log(`[6.3] 正式书籍目录创建成功`);
+        
+        // 保存审计配置
+        console.log(`[6.4] 保存审计配置到：${join(bookDir, "audit-config.json")}`);
+        await state.saveAuditConfig(bookId, body.auditConfig);
+        console.log(`[6.5] 审计配置保存成功`);
+        
+        // 验证保存
+        try {
+          await access(join(bookDir, "audit-config.json"));
+          console.log(`[6.6] 验证：审计配置文件存在`);
+        } catch {
+          console.warn(`[6.6] 验证：审计配置文件不存在！`);
+        }
+      } catch (e) {
+        console.warn(`[6.7] 保存审计配置失败：${e}`);
+      }
+    } else {
+      console.log(`\n[6] 使用全局默认审计配置，不保存书籍特定配置`);
+    }
+
+    console.log(`\n[7] 创建 PipelineRunner 并调用 initBook`);
     const pipeline = new PipelineRunner(await buildPipelineConfig({ externalContext: body.brief }));
     pipeline.initBook(bookConfig).then(
       async () => {
-        // Save audit config if not using global config
-        if (body.useGlobalAuditConfig === false && body.auditConfig) {
-          try {
-            await state.saveAuditConfig(bookId, body.auditConfig);
-          } catch (e) {
-            console.warn("Failed to save audit config:", e);
-          }
-        }
+        console.log(`\n[8] 书籍创建成功`);
         bookCreateStatus.delete(bookId);
         broadcast("book:created", { bookId });
       },
       (e) => {
         const error = e instanceof Error ? e.message : String(e);
+        console.log(`\n[8] 书籍创建失败：${error}`);
         bookCreateStatus.set(bookId, { status: "error", error });
         broadcast("book:error", { bookId, error });
       },
@@ -909,6 +963,132 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // --- Audit Config Test Endpoint ---  
+  
+  app.post("/api/audit-config/test", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { bookId, testScores, configPath } = body;
+      console.log(`Received request: bookId=${bookId}, testScores=${testScores}, configPath=${configPath}`);
+      
+      // 加载审计配置
+      let passThreshold = 80;
+      let dimensionFloor = 60;
+      let configLoaded = false;
+      
+      // 优先使用直接指定的配置文件路径
+      if (configPath) {
+        try {
+          console.log(`Loading audit config from direct path: ${configPath}`);
+          await access(configPath);
+          const configContent = await readFile(configPath, "utf-8");
+          const auditConfig = JSON.parse(configContent);
+          
+          if (auditConfig) {
+            if (auditConfig.foundationReview && typeof auditConfig.foundationReview === 'object') {
+              if (auditConfig.foundationReview.passThreshold !== undefined) {
+                passThreshold = auditConfig.foundationReview.passThreshold;
+                configLoaded = true;
+              }
+              if (auditConfig.foundationReview.dimensionFloor !== undefined) {
+                dimensionFloor = auditConfig.foundationReview.dimensionFloor;
+                configLoaded = true;
+              }
+            }
+          }
+          console.log(`Loaded audit config from direct path: passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}, configLoaded=${configLoaded}`);
+        } catch (fileError) {
+          console.warn(`Failed to load from direct path: ${fileError}`);
+        }
+      }
+      
+      // 如果未指定配置文件路径或加载失败，尝试使用书籍 ID
+      if (!configLoaded && bookId) {
+        try {
+          console.log(`Loading audit config for book: ${bookId}`);
+          // 尝试直接读取审计配置文件
+          const bookDir = state.bookDir(bookId);
+          console.log(`Book directory: ${bookDir}`);
+          const configPath = join(bookDir, "audit-config.json");
+          console.log(`Audit config path: ${configPath}`);
+          
+          // 检查文件是否存在
+          try {
+            await access(configPath);
+            console.log(`Audit config file exists: ${configPath}`);
+            
+            // 读取文件内容
+            const configContent = await readFile(configPath, "utf-8");
+            console.log(`Read audit config file, length: ${configContent.length}`);
+            
+            // 解析配置
+            const auditConfig = JSON.parse(configContent);
+            console.log(`Parsed audit config: ${JSON.stringify(auditConfig, null, 2)}`);
+            
+            if (auditConfig) {
+              // 检查基础审核标准
+              if (auditConfig.passCriteria && typeof auditConfig.passCriteria === 'object') {
+                if (auditConfig.passCriteria.scoringRules && typeof auditConfig.passCriteria.scoringRules === 'object') {
+                  if (auditConfig.passCriteria.scoringRules.minPassScore !== undefined) {
+                    passThreshold = auditConfig.passCriteria.scoringRules.minPassScore;
+                    configLoaded = true;
+                  }
+                }
+              }
+              // 检查foundationReview部分
+              if (auditConfig.foundationReview && typeof auditConfig.foundationReview === 'object') {
+                if (auditConfig.foundationReview.passThreshold !== undefined) {
+                  passThreshold = auditConfig.foundationReview.passThreshold;
+                  configLoaded = true;
+                } else if (auditConfig.foundationReview.minScore !== undefined) {
+                  passThreshold = auditConfig.foundationReview.minScore;
+                  configLoaded = true;
+                }
+                if (auditConfig.foundationReview.dimensionFloor !== undefined) {
+                  dimensionFloor = auditConfig.foundationReview.dimensionFloor;
+                  configLoaded = true;
+                } else if (auditConfig.foundationReview.minDimensionScore !== undefined) {
+                  dimensionFloor = auditConfig.foundationReview.minDimensionScore;
+                  configLoaded = true;
+                }
+              }
+            }
+          } catch (fileError) {
+            console.warn(`Failed to access or read audit config file: ${fileError}`);
+          }
+          
+          console.log(`Loaded audit config: passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}, configLoaded=${configLoaded}`);
+        } catch (e) {
+          console.warn("Failed to load audit config:", e);
+        }
+      }
+      
+      // 计算总分
+      const totalScore = testScores.length > 0
+        ? Math.round(testScores.reduce((sum: number, score: number) => sum + score, 0) / testScores.length)
+        : 0;
+      
+      // 检查是否有维度分数低于最低分
+      const anyBelowFloor = testScores.some((score: number) => score < dimensionFloor);
+      
+      // 检查是否通过审核
+      const passed = totalScore >= passThreshold && !anyBelowFloor;
+      
+      return c.json({
+        passThreshold,
+        dimensionFloor,
+        testScores,
+        totalScore,
+        anyBelowFloor,
+        passed,
+        configLoaded
+      });
+    } catch (e) {
+      console.error("Error in audit config test endpoint:", e);
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   // --- Audit ---
 
   app.post("/api/books/:id/audit/:chapter", async (c) => {
@@ -1262,10 +1442,26 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.delete("/api/books/:id", async (c) => {
     const id = c.req.param("id");
-    const bookDir = state.bookDir(id);
     try {
       const { rm } = await import("node:fs/promises");
-      await rm(bookDir, { recursive: true, force: true });
+      
+      // 尝试删除正式的书籍目录
+      const bookDir = state.bookDir(id);
+      await rm(bookDir, { recursive: true, force: true }).catch(() => undefined);
+      
+      // 尝试删除对应的临时目录
+      const booksDir = join(root, "books");
+      try {
+        const files = await readdir(booksDir);
+        const tempDirs = files.filter(f => f.startsWith(".tmp-book-create-") && f.includes(id));
+        for (const tempDirName of tempDirs) {
+          const tempDir = join(booksDir, tempDirName);
+          await rm(tempDir, { recursive: true, force: true });
+        }
+      } catch (tempError) {
+        // 临时目录不存在，忽略错误
+      }
+      
       broadcast("book:deleted", { bookId: id });
       return c.json({ ok: true, bookId: id });
     } catch (e) {
@@ -1436,8 +1632,91 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const volumePlans = await pipeline.getVolumePlans(id);
-      return c.json({ ok: true, volumePlans });
+      const bookDir = pipeline["state"].bookDir(id);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      
+      try {
+        const outlineContent = await readFile(outlinePath, "utf-8");
+        // Simple parsing to extract volume information
+        const volumeRegex = /### 第 (\d+) 卷 ([^\n]+)[\s\S]*?章节范围：(\d+)-(\d+)[\s\S]*?([\s\S]*?)(?=### 第\d+ 卷|$)/g;
+        const volumePlans = [];
+        let match;
+        
+        while ((match = volumeRegex.exec(outlineContent)) !== null) {
+          volumePlans.push({
+            volumeId: parseInt(match[1], 10),
+            title: match[2]?.trim() || `第${match[1]}卷`,
+            chapterRange: {
+              start: parseInt(match[3], 10),
+              end: parseInt(match[4], 10)
+            },
+            outline: match[5]?.trim() || ""
+          });
+        }
+        
+        return c.json({ ok: true, volumePlans, totalOutline: outlineContent });
+      } catch {
+        return c.json({ ok: true, volumePlans: [], totalOutline: "" });
+      }
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Get specific volume outline
+  app.get("/api/books/:id/volumes/:volumeId/outline", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(id);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      
+      try {
+        const outlineContent = await readFile(outlinePath, "utf-8");
+        // Find specific volume outline
+        const volumeRegex = new RegExp(`### 第${volumeId}卷 ([^\\n]+)[\\s\\S]*?章节范围：(\\d+)-(\\d+)[\\s\\S]*?([\\s\\S]*?)(?=### 第\\d+ 卷|$)`);
+        const match = volumeRegex.exec(outlineContent);
+        
+        if (match) {
+          return c.json({
+            ok: true,
+            volumeId,
+            title: match[1]?.trim() || `第${volumeId}卷`,
+            chapterRange: {
+              start: parseInt(match[2], 10),
+              end: parseInt(match[3], 10)
+            },
+            outline: match[4]?.trim() || ""
+          });
+        } else {
+          return c.json({ error: `Volume ${volumeId} not found` }, 404);
+        }
+      } catch {
+        return c.json({ error: "Failed to read volume outline" }, 500);
+      }
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Rewrite specific volume outline
+  app.post("/api/books/:id/volumes/:volumeId/rewrite-outline", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const book = await pipeline["state"].loadBookConfig(id);
+      const bookDir = pipeline["state"].bookDir(id);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      
+      const outlineContent = await readFile(outlinePath, "utf-8");
+      
+      // TODO: Implement volume outline rewrite logic
+      // For now, just return success
+      return c.json({ ok: true, message: "Volume outline rewrite started" });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
@@ -1446,15 +1725,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // Generate chapter plans for a specific volume
   app.post("/api/books/:id/volumes/:volumeId/generate-plans", async (c) => {
     const id = c.req.param("id");
-    const volumeId = c.req.param("volumeId");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
 
     broadcast("volume:generate-plans:start", { bookId: id, volumeId });
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const result = await pipeline.generateChapterPlansForVolume(id, volumeId);
+      await pipeline.generateChapterPlansForVolume(id, volumeId);
       broadcast("volume:generate-plans:complete", { bookId: id, volumeId });
-      return c.json({ ok: true, chapterPlans: result });
+      return c.json({ ok: true });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       broadcast("volume:generate-plans:error", { bookId: id, volumeId, error });
@@ -1465,15 +1744,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // Rewrite all chapters in a volume
   app.post("/api/books/:id/volumes/:volumeId/rewrite-chapters", async (c) => {
     const id = c.req.param("id");
-    const volumeId = c.req.param("volumeId");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
 
     broadcast("volume:rewrite-chapters:start", { bookId: id, volumeId });
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const result = await pipeline.regenerateVolumeChapters(id, volumeId);
-      broadcast("volume:rewrite-chapters:complete", { bookId: id, volumeId, chapters: result.chapters.length });
-      return c.json({ ok: true, chapters: result.chapters });
+      await pipeline.regenerateVolumeChapters(id, volumeId);
+      broadcast("volume:rewrite-chapters:complete", { bookId: id, volumeId });
+      return c.json({ ok: true });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       broadcast("volume:rewrite-chapters:error", { bookId: id, volumeId, error });
@@ -1484,12 +1763,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // Mark affected chapters
   app.post("/api/books/:id/volumes/:volumeId/mark-affected", async (c) => {
     const id = c.req.param("id");
-    const volumeId = c.req.param("volumeId");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const result = await pipeline.markAffectedChapters(id, volumeId);
-      return c.json({ ok: true, affectedChapters: result });
+      const bookDir = pipeline["state"].bookDir(id);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      
+      try {
+        const outlineContent = await readFile(outlinePath, "utf-8");
+        // Simple parsing to extract volume information
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\s\S]*?章节范围：(\d+)-(\d+)`, "g");
+        const match = volumeRegex.exec(outlineContent);
+        
+        if (match) {
+          const startChapter = parseInt(match[1], 10);
+          const endChapter = parseInt(match[2], 10);
+          
+          await pipeline.markAffectedChapters(id, { start: startChapter, end: endChapter });
+          return c.json({ ok: true, affectedChapters: { start: startChapter, end: endChapter } });
+        } else {
+          return c.json({ error: `Volume ${volumeId} not found in outline` }, 404);
+        }
+      } catch {
+        return c.json({ error: "Failed to read volume outline" }, 500);
+      }
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }

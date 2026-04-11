@@ -147,6 +147,12 @@ const strings = {
   "book.fixOrder": { zh: "修复章节顺序", en: "Fix Chapter Order" },
   "book.delete": { zh: "删除", en: "Delete" },
   "book.sync": { zh: "同步", en: "Sync" },
+  "book.chapters": { zh: "章节", en: "Chapters" },
+  "book.chapter": { zh: "章节", en: "Chapter" },
+  "book.title": { zh: "标题", en: "Title" },
+  "book.actions": { zh: "操作", en: "Actions" },
+  "book.confirmDeleteTitle": { zh: "确认删除", en: "Confirm Delete" },
+  "book.confirmDeleteMessage": { zh: "确定要删除这本书籍及其所有章节吗？此操作不可撤销。", en: "Are you sure you want to delete this book and all its chapters? This action cannot be undone." },
 
   // Style
   "style.title": { zh: "文风分析", en: "Style Analyzer" },

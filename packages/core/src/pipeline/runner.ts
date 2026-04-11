@@ -36,7 +36,7 @@ import type { MemorySelection } from "../utils/memory-retrieval.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
 import { rewriteStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
-import { readFile, readdir, writeFile, mkdir, rename, rm, stat, copyFile, unlink } from "node:fs/promises";
+import { readFile, readdir, writeFile, mkdir, rename, rm, stat, copyFile, unlink, access } from "node:fs/promises";
 import { join } from "node:path";
 import {
   parseStateDegradedReviewNote,
@@ -409,6 +409,8 @@ export class PipelineRunner {
     readonly language: "zh" | "en";
     readonly stageLanguage: LengthLanguage;
     readonly maxRetries?: number;
+    readonly passThreshold?: number;
+    readonly dimensionFloor?: number;
   }): Promise<ArchitectOutput> {
     const maxRetries = params.maxRetries ?? 2;
     let foundation = await params.generate();
@@ -425,6 +427,8 @@ export class PipelineRunner {
         sourceCanon: params.sourceCanon,
         styleGuide: params.styleGuide,
         language: params.language,
+        passThreshold: params.passThreshold,
+        dimensionFloor: params.dimensionFloor,
       });
 
       this.config.logger?.info(
@@ -453,6 +457,8 @@ export class PipelineRunner {
       sourceCanon: params.sourceCanon,
       styleGuide: params.styleGuide,
       language: params.language,
+      passThreshold: params.passThreshold,
+      dimensionFloor: params.dimensionFloor,
     });
     this.config.logger?.info(
       `Foundation final review: ${finalReview.totalScore}/100 ${finalReview.passed ? "PASSED" : "ACCEPTED (max retries)"}`,
@@ -698,10 +704,130 @@ export class PipelineRunner {
     );
     const stageLanguage = await this.resolveBookLanguage(book);
 
+    console.log(`\n[PipelineRunner.initBook] 创建临时目录`);
+    console.log(`[PipelineRunner.initBook] 临时目录路径：${stagingBookDir}`);
+    
+    // 创建临时目录后，尝试从正式书籍目录复制审计配置到临时目录
+    try {
+      console.log(`[PipelineRunner.initBook] 检查正式书籍目录是否存在审计配置`);
+      const formalAuditConfigPath = join(bookDir, "audit-config.json");
+      try {
+        await access(formalAuditConfigPath);
+        console.log(`[PipelineRunner.initBook] 正式书籍目录存在审计配置：${formalAuditConfigPath}`);
+        
+        // 创建临时目录
+        await mkdir(stagingBookDir, { recursive: true });
+        console.log(`[PipelineRunner.initBook] 临时目录创建成功`);
+        
+        // 复制审计配置到临时目录
+        const tempAuditConfigPath = join(stagingBookDir, "audit-config.json");
+        await copyFile(formalAuditConfigPath, tempAuditConfigPath);
+        console.log(`[PipelineRunner.initBook] 审计配置已从正式目录复制到临时目录：${tempAuditConfigPath}`);
+        
+        // 验证复制
+        try {
+          await access(tempAuditConfigPath);
+          console.log(`[PipelineRunner.initBook] 验证：临时目录中的审计配置文件存在`);
+        } catch {
+          console.warn(`[PipelineRunner.initBook] 验证：临时目录中的审计配置文件不存在！`);
+        }
+      } catch {
+        console.log(`[PipelineRunner.initBook] 正式书籍目录不存在审计配置，跳过复制`);
+        // 创建临时目录
+        await mkdir(stagingBookDir, { recursive: true });
+        console.log(`[PipelineRunner.initBook] 临时目录创建成功`);
+      }
+    } catch (e) {
+      console.warn(`[PipelineRunner.initBook] 复制审计配置失败：${e instanceof Error ? e.message : String(e)}`);
+      // 创建临时目录
+      try {
+        await mkdir(stagingBookDir, { recursive: true });
+        console.log(`[PipelineRunner.initBook] 临时目录创建成功`);
+      } catch (mkdirError) {
+        console.error(`[PipelineRunner.initBook] 临时目录创建失败：${mkdirError instanceof Error ? mkdirError.message : String(mkdirError)}`);
+      }
+    }
+
     this.logStage(stageLanguage, { zh: "生成基础设定", en: "generating foundation" });
     const { profile: gp } = await this.loadGenreProfile(book.genre);
     const reviewer = new FoundationReviewerAgent(this.agentCtxFor("foundation-reviewer", book.id));
     const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" as const : "zh" as const;
+    
+    // 尝试加载审计配置
+    let passThreshold = 80;
+    let dimensionFloor = 60;
+    try {
+      // 先尝试从正式书籍目录加载审计配置
+      try {
+        const auditConfig = await this.state.loadAuditConfig(book.id);
+        if (auditConfig) {
+          // 使用类型断言来访问属性
+          const config = auditConfig as any;
+          // 检查审计配置的结构
+          if (config.foundationReview && typeof config.foundationReview === 'object') {
+            // 检查passThreshold和dimensionFloor属性
+            if (config.foundationReview.passThreshold !== undefined) {
+              passThreshold = config.foundationReview.passThreshold;
+            } else if (config.foundationReview.minScore !== undefined) {
+              passThreshold = config.foundationReview.minScore;
+            }
+            if (config.foundationReview.dimensionFloor !== undefined) {
+              dimensionFloor = config.foundationReview.dimensionFloor;
+            } else if (config.foundationReview.minDimensionScore !== undefined) {
+              dimensionFloor = config.foundationReview.minDimensionScore;
+            }
+          } else if (config.passCriteria && typeof config.passCriteria === 'object') {
+            passThreshold = config.passCriteria.foundationReview?.minScore ?? 80;
+            dimensionFloor = config.passCriteria.foundationReview?.minDimensionScore ?? 60;
+          }
+        }
+      } catch (e) {
+        // 如果从正式书籍目录加载失败，尝试从临时目录加载
+        this.config.logger?.debug(`Failed to load audit config from book directory: ${e instanceof Error ? e.message : String(e)}`);
+        try {
+          // 查找临时目录
+          const booksDir = this.state.booksDir;
+          const files = await readdir(booksDir);
+          const tempDirs = files.filter(f => f.startsWith(".tmp-book-create-") && f.includes(book.id));
+          if (tempDirs.length > 0) {
+            const tempDir = join(booksDir, tempDirs[0]);
+            const auditConfig = await this.state.loadAuditConfigAt(tempDir);
+            if (auditConfig) {
+              // 使用类型断言来访问属性
+              const config = auditConfig as any;
+              // 检查审计配置的结构
+              if (config.foundationReview && typeof config.foundationReview === 'object') {
+                // 检查passThreshold和dimensionFloor属性
+                if (config.foundationReview.passThreshold !== undefined) {
+                  passThreshold = config.foundationReview.passThreshold;
+                } else if (config.foundationReview.minScore !== undefined) {
+                  passThreshold = config.foundationReview.minScore;
+                }
+                if (config.foundationReview.dimensionFloor !== undefined) {
+                  dimensionFloor = config.foundationReview.dimensionFloor;
+                } else if (config.foundationReview.minDimensionScore !== undefined) {
+                  dimensionFloor = config.foundationReview.minDimensionScore;
+                }
+              } else if (config.passCriteria && typeof config.passCriteria === 'object') {
+                passThreshold = config.passCriteria.foundationReview?.minScore ?? 80;
+                dimensionFloor = config.passCriteria.foundationReview?.minDimensionScore ?? 60;
+              }
+            }
+          }
+        } catch (tempError) {
+          // 如果从临时目录加载也失败，使用默认值
+          this.config.logger?.debug(`Failed to load audit config from temp directory: ${tempError instanceof Error ? tempError.message : String(tempError)}`);
+        }
+      }
+    } catch (e) {
+      // 如果加载审计配置失败，使用默认值
+      this.config.logger?.debug(`Failed to load audit config: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    
+    // 输出加载的审计配置，以便调试
+    console.log(`Loaded audit config for book ${book.id}: passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}`);
+    this.config.logger?.info(`Loaded audit config for book ${book.id}: passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}`);
+    
     const foundation = await this.generateAndReviewFoundation({
       generate: (reviewFeedback) => architect.generateFoundation(
         book,
@@ -712,6 +838,8 @@ export class PipelineRunner {
       mode: "original",
       language: resolvedLanguage,
       stageLanguage,
+      passThreshold,
+      dimensionFloor,
     });
     try {
       this.logStage(stageLanguage, { zh: "保存书籍配置", en: "saving book config" });
@@ -745,16 +873,45 @@ export class PipelineRunner {
         await rm(bookDir, { recursive: true, force: true });
       }
 
-      // 保存卷纲为临时文件，返回给前端确认
+      console.log(`\n[PipelineRunner.initBook] 卷纲生成完成，准备重命名临时目录为正式目录`);
+      console.log(`[PipelineRunner.initBook] 临时目录：${stagingBookDir}`);
+      console.log(`[PipelineRunner.initBook] 正式目录：${bookDir}`);
+      
+      // 保存卷纲为临时文件
       const tempPath = join(stagingBookDir, "story", "volume_outline.temp.md");
       await writeFile(tempPath, foundation.volumeOutline, "utf-8");
+      
+      // 重命名临时目录为正式书籍目录
+      try {
+        await rename(stagingBookDir, bookDir);
+        console.log(`[PipelineRunner.initBook] 临时目录已重命名为正式目录：${bookDir}`);
+        
+        // 更新书籍状态为 outlining
+        const bookConfigPath = join(bookDir, "book.json");
+        const bookConfig = JSON.parse(await readFile(bookConfigPath, "utf-8"));
+        bookConfig.status = "outlining";
+        bookConfig.updatedAt = new Date().toISOString();
+        await writeFile(bookConfigPath, JSON.stringify(bookConfig, null, 2), "utf-8");
+        console.log(`[PipelineRunner.initBook] 书籍状态已更新为：outlining`);
+        
+        // 验证重命名
+        try {
+          await access(join(bookDir, "story", "story_bible.md"));
+          console.log(`[PipelineRunner.initBook] 验证：正式目录中的基础设定文件存在`);
+        } catch {
+          console.warn(`[PipelineRunner.initBook] 验证：正式目录中的基础设定文件不存在！`);
+        }
+      } catch (renameError) {
+        console.warn(`[PipelineRunner.initBook] 重命名失败：${renameError instanceof Error ? renameError.message : String(renameError)}`);
+        // 如果重命名失败，保留临时目录
+      }
 
       this.logInfo(stageLanguage, {
         zh: "卷纲生成完成，等待用户确认",
         en: "Volume outline generated, waiting for user confirmation",
       });
 
-      return { volumeOutline: foundation.volumeOutline, tempPath: stagingBookDir };
+      return { volumeOutline: foundation.volumeOutline, tempPath: bookDir };
     } catch (error) {
       await rm(stagingBookDir, { recursive: true, force: true }).catch(() => undefined);
       throw error;
@@ -762,31 +919,39 @@ export class PipelineRunner {
   }
 
   async confirmBookCreation(bookId: string, tempPath: string): Promise<void> {
-    const book = await this.state.loadBookConfigAt(tempPath);
+    const book = await this.state.loadBookConfig(bookId);
     const bookDir = this.state.bookDir(bookId);
     const stageLanguage = await this.resolveBookLanguage(book);
+
+    console.log(`\n[PipelineRunner.confirmBookCreation] 确认书籍创建`);
+    console.log(`[PipelineRunner.confirmBookCreation] 书籍 ID: ${bookId}`);
+    console.log(`[PipelineRunner.confirmBookCreation] 书籍目录：${bookDir}`);
 
     this.logStage(stageLanguage, { zh: "确认书籍创建", en: "Confirming book creation" });
 
     try {
       // 替换原卷纲文件
-      const tempOutlinePath = join(tempPath, "story", "volume_outline.temp.md");
-      const finalOutlinePath = join(tempPath, "story", "volume_outline.md");
+      const tempOutlinePath = join(bookDir, "story", "volume_outline.temp.md");
+      const finalOutlinePath = join(bookDir, "story", "volume_outline.md");
       await copyFile(tempOutlinePath, finalOutlinePath);
       await unlink(tempOutlinePath);
+      
+      console.log(`[PipelineRunner.confirmBookCreation] 卷纲文件已替换`);
 
-      // 重命名临时目录为正式书籍目录
-      if (await this.pathExists(bookDir)) {
-        await rm(bookDir, { recursive: true, force: true });
-      }
-      await rename(tempPath, bookDir);
+      // 更新书籍状态为 active
+      const bookConfigPath = join(bookDir, "book.json");
+      const bookConfig = JSON.parse(await readFile(bookConfigPath, "utf-8"));
+      bookConfig.status = "active";
+      bookConfig.updatedAt = new Date().toISOString();
+      await writeFile(bookConfigPath, JSON.stringify(bookConfig, null, 2), "utf-8");
+      console.log(`[PipelineRunner.confirmBookCreation] 书籍状态已更新为：active`);
 
       this.logInfo(stageLanguage, {
         zh: "书籍创建完成",
         en: "Book creation completed",
       });
 
-      // 索引基础设定文件到RAG系统
+      // 索引基础设定文件到 RAG 系统
       await this.indexBookFoundationToRAG(bookId);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

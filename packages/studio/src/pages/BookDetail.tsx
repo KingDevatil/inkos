@@ -1,4 +1,4 @@
-import { fetchJson, useApi, postApi } from "../hooks/use-api";
+import { fetchJson, useApi, postApi, putApi } from "../hooks/use-api";
 import { useEffect, useMemo, useState, useRef } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
@@ -160,6 +160,16 @@ export function BookDetail({
   const [volumePlans, setVolumePlans] = useState<any>(null);
   const [loadingVolumePlans, setLoadingVolumePlans] = useState(false);
   const [activeTab, setActiveTab] = useState<"chapters" | "volume-plans">('chapters');
+  
+  // Volume outline modal states
+  const [showVolumeOutlineModal, setShowVolumeOutlineModal] = useState(false);
+  const [selectedVolumeOutline, setSelectedVolumeOutline] = useState<any>(null);
+  const [loadingVolumeOutline, setLoadingVolumeOutline] = useState(false);
+  
+  // Chapter plans modal states
+  const [showChapterPlansModal, setShowChapterPlansModal] = useState(false);
+  const [selectedVolumeChapterPlans, setSelectedVolumeChapterPlans] = useState<any>(null);
+  const [loadingChapterPlans, setLoadingChapterPlans] = useState(false);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -174,6 +184,46 @@ export function BookDetail({
       console.error('Failed to load volume plans:', e);
     } finally {
       setLoadingVolumePlans(false);
+    }
+  };
+
+  const viewVolumeOutline = async (volumeId: number) => {
+    setLoadingVolumeOutline(true);
+    setShowVolumeOutlineModal(true);
+    try {
+      const response = await fetchJson(`/books/${bookId}/volumes/${volumeId}/outline`);
+      setSelectedVolumeOutline(response);
+    } catch (e) {
+      console.error('Failed to load volume outline:', e);
+      setSelectedVolumeOutline(null);
+    } finally {
+      setLoadingVolumeOutline(false);
+    }
+  };
+
+  const rewriteVolumeOutline = async (volumeId: number) => {
+    if (!confirm('确定要重写本卷卷纲吗？')) return;
+    try {
+      await postApi(`/books/${bookId}/volumes/${volumeId}/rewrite-outline`);
+      alert('卷纲重写已开始，请等待完成');
+      loadVolumePlans();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '卷纲重写失败');
+    }
+  };
+
+  const viewChapterPlans = async (volumeId: number) => {
+    setLoadingChapterPlans(true);
+    setShowChapterPlansModal(true);
+    try {
+      // TODO: Implement API to get chapter plans for a volume
+      // For now, just show a placeholder
+      setSelectedVolumeChapterPlans({ volumeId, plans: [] });
+    } catch (e) {
+      console.error('Failed to load chapter plans:', e);
+      setSelectedVolumeChapterPlans(null);
+    } finally {
+      setLoadingChapterPlans(false);
     }
   };
 
@@ -418,11 +468,7 @@ export function BookDetail({
     if (!auditConfig) return;
     setSavingAuditConfig(true);
     try {
-      await fetchJson(`/books/${bookId}/audit-config`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(auditConfig),
-      });
+      await putApi(`/books/${bookId}/audit-config`, auditConfig);
       setShowAuditConfig(false);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to save audit config");
@@ -491,13 +537,6 @@ export function BookDetail({
             {t("book.approveAll")} ({reviewCount})
           </button>
         )}
-        <button
-          onClick={() => setShowVolumeOutlineRegenerate(true)}
-          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
-        >
-          <RefreshCw size={14} />
-          重生成卷纲
-        </button>
         <button
           onClick={() => (nav as { toTruth?: (id: string) => void }).toTruth?.(bookId)}
           className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
@@ -807,56 +846,41 @@ export function BookDetail({
               <div className="flex items-center justify-center h-64">
                 <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
               </div>
-            ) : volumePlans ? (
-              <div className="space-y-6">
+            ) : volumePlans && volumePlans.length > 0 ? (
+              <div className="space-y-4">
                 {volumePlans.map((volume: any) => (
-                  <div key={volume.id} className="border border-border/40 rounded-xl p-4">
-                    <div className="flex items-start justify-between mb-4">
-                      <div>
-                        <h3 className="text-lg font-bold">{volume.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-1">{volume.description}</p>
+                  <div key={volume.volumeId} className="border border-border/40 rounded-xl p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-4">
+                        <h3 className="text-xl font-bold">{volume.title}</h3>
+                        <div className="text-sm text-muted-foreground">
+                          章节范围：{volume.chapterRange.start}-{volume.chapterRange.end} 章
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => generateChapterPlans(volume.id)}
-                          className="px-3 py-1.5 text-xs font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
+                          onClick={() => viewVolumeOutline(volume.volumeId)}
+                          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-all"
                         >
-                          生成章节规划
+                          <BookOpen size={14} />
+                          查看卷纲
                         </button>
                         <button
-                          onClick={() => rewriteVolumeChapters(volume.id)}
-                          className="px-3 py-1.5 text-xs font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
+                          onClick={() => viewChapterPlans(volume.volumeId)}
+                          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
                         >
-                          重写本卷章节
+                          <List size={14} />
+                          章节规划
                         </button>
                         <button
-                          onClick={() => markAffectedChapters(volume.id)}
-                          className="px-3 py-1.5 text-xs font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all"
+                          onClick={() => rewriteVolumeOutline(volume.volumeId)}
+                          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all"
                         >
-                          标记受影响章节
+                          <RefreshCw size={14} />
+                          重写卷纲
                         </button>
                       </div>
                     </div>
-                    {volume.chapterPlans ? (
-                      <div className="mt-4 space-y-3">
-                        <h4 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">章节规划</h4>
-                        {volume.chapterPlans.map((chapter: any, index: number) => (
-                          <div key={index} className="flex items-center gap-3 p-3 border border-border/20 rounded-lg">
-                            <div className="w-8 h-8 flex items-center justify-center bg-primary/10 text-primary rounded-full text-sm font-bold">
-                              {index + 1}
-                            </div>
-                            <div className="flex-1">
-                              <div className="font-medium">{chapter.title}</div>
-                              <div className="text-xs text-muted-foreground">{chapter.description}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-4 p-4 border border-dashed border-border/50 rounded-lg text-center text-muted-foreground">
-                        尚未生成章节规划
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -874,11 +898,139 @@ export function BookDetail({
             )}
           </div>
         )}
+
+        {/* Volume Outline Modal */}
+        {showVolumeOutlineModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-card rounded-xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between p-6 border-b border-border/40">
+                <h3 className="text-xl font-bold">
+                  {selectedVolumeOutline?.title || `第${selectedVolumeOutline?.volumeId}卷 卷纲`}
+                </h3>
+                <button
+                  onClick={() => setShowVolumeOutlineModal(false)}
+                  className="p-2 hover:bg-secondary rounded-lg transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                {loadingVolumeOutline ? (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+                  </div>
+                ) : selectedVolumeOutline?.outline ? (
+                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                    <div className="whitespace-pre-wrap text-sm text-muted-foreground">
+                      {selectedVolumeOutline.outline}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground">
+                    <FileText size={48} className="mb-4 opacity-50" />
+                    <p>暂无卷纲内容</p>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2 p-6 border-t border-border/40">
+                <button
+                  onClick={() => setShowVolumeOutlineModal(false)}
+                  className="px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
+                >
+                  关闭
+                </button>
+                {selectedVolumeOutline && (
+                  <button
+                    onClick={() => {
+                      rewriteVolumeOutline(selectedVolumeOutline.volumeId);
+                      setShowVolumeOutlineModal(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all"
+                  >
+                    <RefreshCw size={14} />
+                    重写卷纲
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Chapter Plans Modal */}
+        {showChapterPlansModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-card rounded-xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between p-6 border-b border-border/40">
+                <h3 className="text-xl font-bold">
+                  第{selectedVolumeChapterPlans?.volumeId}卷 章节规划
+                </h3>
+                <button
+                  onClick={() => setShowChapterPlansModal(false)}
+                  className="p-2 hover:bg-secondary rounded-lg transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                {loadingChapterPlans ? (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+                  </div>
+                ) : selectedVolumeChapterPlans?.plans && selectedVolumeChapterPlans.plans.length > 0 ? (
+                  <div className="space-y-3">
+                    {selectedVolumeChapterPlans.plans.map((chapter: any, index: number) => (
+                      <div key={index} className="flex items-center gap-3 p-3 border border-border/20 rounded-lg">
+                        <div className="w-8 h-8 flex items-center justify-center bg-primary/10 text-primary rounded-full text-sm font-bold">
+                          {index + 1}
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-medium">{chapter.title}</div>
+                          <div className="text-xs text-muted-foreground">{chapter.description}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground">
+                    <List size={48} className="mb-4 opacity-50" />
+                    <p>暂无章节规划</p>
+                    <button
+                      onClick={() => generateChapterPlans(String(selectedVolumeChapterPlans?.volumeId))}
+                      className="mt-4 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
+                    >
+                      生成章节规划
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2 p-6 border-t border-border/40">
+                <button
+                  onClick={() => setShowChapterPlansModal(false)}
+                  className="px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
+                >
+                  关闭
+                </button>
+                {selectedVolumeChapterPlans && (
+                  <button
+                    onClick={() => {
+                      generateChapterPlans(String(selectedVolumeChapterPlans.volumeId));
+                      setShowChapterPlansModal(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
+                  >
+                    <Plus size={14} />
+                    生成章节规划
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Delete Confirmation */}
       <ConfirmDialog
-        isOpen={confirmDeleteOpen}
+        open={confirmDeleteOpen}
         title={t("book.confirmDeleteTitle")}
         message={t("book.confirmDeleteMessage")}
         confirmLabel={t("book.deleteBook")}

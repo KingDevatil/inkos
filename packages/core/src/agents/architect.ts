@@ -922,7 +922,9 @@ ${trimmed}\n`;
 
   private parseSections(content: string): ArchitectOutput {
     const parsedSections = new Map<string, string>();
-    const sectionPattern = /^\s*===\s*SECTION\s*[：:]\s*([^\n=]+?)\s*===\s*$/gim;
+    
+    // 改进的正则表达式，更灵活地匹配部分标记
+    const sectionPattern = /\s*===\s*SECTION\s*[：:]?\s*([^\n=]+?)\s*===\s*/gim;
     const matches = [...content.matchAll(sectionPattern)];
 
     for (let i = 0; i < matches.length; i++) {
@@ -935,10 +937,58 @@ ${trimmed}\n`;
     }
 
     const extract = (name: string): string => {
-      const section = parsedSections.get(this.normalizeSectionName(name));
+      const normalizedName = this.normalizeSectionName(name);
+      let section = parsedSections.get(normalizedName);
+      
+      // 如果找不到精确匹配，尝试查找近似匹配
+      if (!section) {
+        for (const [key, value] of parsedSections.entries()) {
+          if (key.includes(normalizedName) || normalizedName.includes(key)) {
+            section = value;
+            break;
+          }
+        }
+      }
+      
+      // 如果仍然找不到，尝试从整个内容中提取
+      if (!section) {
+        if (name === "story_bible") {
+          // 尝试从内容中提取故事圣经部分
+          const storyBibleMatch = content.match(/(story[\s_]*bible[\s\S]*?)(?=\s*===|$)/i);
+          if (storyBibleMatch) {
+            section = storyBibleMatch[1].trim();
+          }
+        } else if (name === "volume_outline") {
+          // 尝试从内容中提取卷纲部分
+          const outlineMatch = content.match(/(volume[\s_]*outline[\s\S]*?)(?=\s*===|$)/i);
+          if (outlineMatch) {
+            section = outlineMatch[1].trim();
+          }
+        } else if (name === "book_rules") {
+          // 尝试从内容中提取书籍规则部分
+          const rulesMatch = content.match(/(book[\s_]*rules[\s\S]*?)(?=\s*===|$)/i);
+          if (rulesMatch) {
+            section = rulesMatch[1].trim();
+          }
+        } else if (name === "current_state") {
+          // 尝试从内容中提取当前状态部分
+          const stateMatch = content.match(/(current[\s_]*state[\s\S]*?)(?=\s*===|$)/i);
+          if (stateMatch) {
+            section = stateMatch[1].trim();
+          }
+        } else if (name === "pending_hooks") {
+          // 尝试从内容中提取伏笔部分
+          const hooksMatch = content.match(/(pending[\s_]*hooks[\s\S]*?)(?=\s*===|$)/i);
+          if (hooksMatch) {
+            section = hooksMatch[1].trim();
+          }
+        }
+      }
+      
       if (!section) {
         throw new Error(`Architect output missing required section: ${name}`);
       }
+      
       if (name !== "pending_hooks") {
         return section;
       }

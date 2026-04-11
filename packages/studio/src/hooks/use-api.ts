@@ -42,6 +42,11 @@ export function deriveInvalidationPaths(path: string): ReadonlyArray<string> {
     return ["/api/books", `/api/books/${chapterAction[1]}`];
   }
 
+  const auditConfigAction = normalized.match(/^\/api\/books\/([^/]+)\/audit-config$/);
+  if (auditConfigAction) {
+    return [`/api/books/${auditConfigAction[1]}/audit-config`];
+  }
+
   if (/^\/api\/daemon\/(start|stop)$/.test(normalized)) {
     return ["/api/daemon"];
   }

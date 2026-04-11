@@ -12,8 +12,9 @@ export interface FoundationReviewResult {
   readonly overallFeedback: string;
 }
 
-const PASS_THRESHOLD = 80;
-const DIMENSION_FLOOR = 60;
+// 默认值
+const DEFAULT_PASS_THRESHOLD = 80;
+const DEFAULT_DIMENSION_FLOOR = 60;
 
 export class FoundationReviewerAgent extends BaseAgent {
   get name(): string {
@@ -26,6 +27,8 @@ export class FoundationReviewerAgent extends BaseAgent {
     readonly sourceCanon?: string;
     readonly styleGuide?: string;
     readonly language: "zh" | "en";
+    readonly passThreshold?: number;
+    readonly dimensionFloor?: number;
   }): Promise<FoundationReviewResult> {
     const canonBlock = params.sourceCanon
       ? `\n## 原作正典参照\n${params.sourceCanon.slice(0, 8000)}\n`
@@ -49,7 +52,10 @@ export class FoundationReviewerAgent extends BaseAgent {
       { role: "user", content: userPrompt },
     ], { maxTokens: 4096, temperature: 0.3 });
 
-    return this.parseReviewResult(response.content, dimensions);
+    const passThreshold = params.passThreshold ?? DEFAULT_PASS_THRESHOLD;
+    const dimensionFloor = params.dimensionFloor ?? DEFAULT_DIMENSION_FLOOR;
+
+    return this.parseReviewResult(response.content, dimensions, passThreshold, dimensionFloor);
   }
 
   private originalDimensions(language: "zh" | "en"): ReadonlyArray<string> {
@@ -173,6 +179,8 @@ Be strict. 80 means "ready to write without changes."`;
   private parseReviewResult(
     content: string,
     dimensions: ReadonlyArray<string>,
+    passThreshold: number,
+    dimensionFloor: number,
   ): FoundationReviewResult {
     const parsedDimensions: Array<{ readonly name: string; readonly score: number; readonly feedback: string }> = [];
 
@@ -191,8 +199,8 @@ Be strict. 80 means "ready to write without changes."`;
     const totalScore = parsedDimensions.length > 0
       ? Math.round(parsedDimensions.reduce((sum, d) => sum + d.score, 0) / parsedDimensions.length)
       : 0;
-    const anyBelowFloor = parsedDimensions.some((d) => d.score < DIMENSION_FLOOR);
-    const passed = totalScore >= PASS_THRESHOLD && !anyBelowFloor;
+    const anyBelowFloor = parsedDimensions.some((d) => d.score < dimensionFloor);
+    const passed = totalScore >= passThreshold && !anyBelowFloor;
 
     const overallMatch = content.match(
       /=== OVERALL ===[\s\S]*?(?:总评|Summary)[：:]\s*([\s\S]*?)$/,

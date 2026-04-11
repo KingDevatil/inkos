@@ -133,6 +133,8 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const [activeAuditTab, setActiveAuditTab] = useState<"dimensions" | "validation" | "chapter" | "foundation" | "help">("dimensions");
   const [briefContent, setBriefContent] = useState("");
   const [briefFileName, setBriefFileName] = useState("");
+  const [creationLogs, setCreationLogs] = useState<string[]>([]);
+  const [isPollingStatus, setIsPollingStatus] = useState(false);
 
   const handleBriefFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -174,14 +176,151 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const loadDefaultAuditConfig = async () => {
     setLoadingAuditConfig(true);
     try {
-      const config = await fetchJson("/audit-config/default");
-      setAuditConfig(config);
-      setShowAuditConfigForm(true);
+      // 如果已经有审计配置，使用当前配置，否则加载默认配置
+      if (auditConfig) {
+        console.log('Using existing audit config:', auditConfig);
+        setShowAuditConfigForm(true);
+      } else {
+        console.log('Loading default audit config...');
+        const config = await fetchJson("/audit-config/default");
+        console.log('Default config:', config);
+        setAuditConfig(config);
+        setShowAuditConfigForm(true);
+      }
     } catch (e) {
+      console.error('Error loading audit config:', e);
       setError(e instanceof Error ? e.message : "Failed to load default audit config");
     } finally {
       setLoadingAuditConfig(false);
     }
+  };
+
+  const pollBookCreationStatus = async (bookId: string, maxAttempts = 120, delayMs = 1000) => {
+    setIsPollingStatus(true);
+    setCreationLogs([]);
+    
+    const addLog = (message: string) => {
+      setCreationLogs(prev => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev]);
+    };
+
+    addLog("开始创建书籍...");
+    addLog(`书籍ID: ${bookId}`);
+    addLog("正在初始化书籍配置...");
+    addLog("正在调用 Architect 生成基础设定...");
+    addLog("正在等待模型生成内容...");
+
+    // 连接到 SSE 流获取详细日志
+    let sseConnected = false;
+    try {
+      const eventSource = new EventSource('/api/events');
+      
+      eventSource.addEventListener('log', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.message) {
+            addLog(`📢 ${data.message}`);
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      });
+      
+      eventSource.addEventListener('book:created', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.bookId === bookId) {
+            addLog("✅ 书籍创建成功！");
+            eventSource.close();
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      });
+      
+      eventSource.addEventListener('book:error', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.bookId === bookId && data.error) {
+            addLog(`❌ 创建失败: ${data.error}`);
+            eventSource.close();
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      });
+      
+      eventSource.addEventListener('error', () => {
+        eventSource.close();
+      });
+      
+      sseConnected = true;
+    } catch (e) {
+      addLog("⚠️ 无法连接到事件流，将使用轮询获取状态");
+    }
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        // 尝试获取书籍信息
+        try {
+          const bookInfo = await fetchJson(`/books/${bookId}`);
+          addLog("✅ 书籍创建成功！");
+          addLog(`📚 书籍标题: ${bookInfo.book.title}`);
+          addLog(`📖 目标章节数: ${bookInfo.book.targetChapters}`);
+          addLog(`💬 语言: ${bookInfo.book.language === 'zh' ? '中文' : 'English'}`);
+          addLog("🚀 正在跳转到书籍详情页...");
+          setIsPollingStatus(false);
+          return true;
+        } catch (bookError) {
+          // 书籍还未创建完成，尝试获取创建状态
+          try {
+            const status = await fetchJson<{ status: string; error?: string; progress?: string; modelOutput?: string }>(`/books/${bookId}/create-status`);
+            
+            if (status.status === "error") {
+              addLog(`❌ 创建失败: ${status.error || "未知错误"}`);
+              if (status.modelOutput) {
+                const modelOutputPreview = status.modelOutput.substring(0, 500) + (status.modelOutput.length > 500 ? '...' : '');
+                addLog(`📝 模型输出预览: ${modelOutputPreview}`);
+                // 检查模型输出是否包含必要的部分
+                const hasStoryBible = status.modelOutput.toLowerCase().includes('story_bible');
+                const hasVolumeOutline = status.modelOutput.toLowerCase().includes('volume_outline');
+                const hasBookRules = status.modelOutput.toLowerCase().includes('book_rules');
+                const hasCurrentState = status.modelOutput.toLowerCase().includes('current_state');
+                const hasPendingHooks = status.modelOutput.toLowerCase().includes('pending_hooks');
+                addLog(`🔍 输出格式检查: story_bible=${hasStoryBible ? '✅' : '❌'}, volume_outline=${hasVolumeOutline ? '✅' : '❌'}, book_rules=${hasBookRules ? '✅' : '❌'}, current_state=${hasCurrentState ? '✅' : '❌'}, pending_hooks=${hasPendingHooks ? '✅' : '❌'}`);
+              }
+              setIsPollingStatus(false);
+              throw new Error(status.error || "书籍创建失败");
+            } else if (status.status === "creating") {
+              if (attempt % 3 === 0) { // 每3秒更新一次日志
+                addLog("⏳ 正在创建中...");
+                if (status.progress) {
+                  addLog(`📊 进度: ${status.progress}`);
+                }
+              }
+            }
+          } catch (statusError) {
+            if (statusError instanceof Error && statusError.message !== "404 Not Found") {
+              addLog(`❌ 状态查询失败: ${statusError.message}`);
+            } else if (attempt % 10 === 0) {
+              addLog("⏳ 正在创建中...");
+              addLog("📡 正在等待模型生成内容...");
+            }
+          }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      } catch (error) {
+        addLog(`❌ 错误: ${error instanceof Error ? error.message : String(error)}`);
+        setIsPollingStatus(false);
+        throw error;
+      }
+    }
+
+    addLog("⏳ 创建时间过长，正在检查...");
+    addLog("⚠️ 可能是大模型生成时间较长，请耐心等待...");
+    addLog("💡 检查服务器日志获取更多详细信息");
+    setIsPollingStatus(false);
+    throw new Error("书籍创建超时，请稍后检查");
   };
 
   const handleCreate = async () => {
@@ -195,6 +334,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     }
     setCreating(true);
     setError(null);
+    setCreationLogs([]);
     try {
       const result = await postApi<{ bookId: string }>("/books/create", {
         title: title.trim(),
@@ -207,12 +347,16 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
         auditConfig: useGlobalAuditConfig ? undefined : auditConfig,
         brief: briefContent || undefined,
       });
-      await waitForBookReady(result.bookId);
-      nav.toBook(result.bookId);
+      
+      const success = await pollBookCreationStatus(result.bookId);
+      if (success) {
+        nav.toBook(result.bookId);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create book");
     } finally {
       setCreating(false);
+      setIsPollingStatus(false);
     }
   };
 
@@ -392,6 +536,8 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
                     loadDefaultAuditConfig();
                   } else {
                     setShowAuditConfigForm(false);
+                    // 切换回使用全局默认配置时，清除当前的auditConfig状态
+                    setAuditConfig(null);
                   }
                 }}
                 className="sr-only peer"
@@ -410,6 +556,36 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
         {creating ? t("create.creating") : t("create.submit")}
       </button>
 
+      {/* Creation Logs */}
+      {(creating || creationLogs.length > 0) && (
+        <div className="mt-4 border border-border/50 rounded-lg overflow-hidden">
+          <div className="bg-secondary/30 px-4 py-2 border-b border-border/50 flex items-center justify-between">
+            <h3 className="text-sm font-medium">创建进度</h3>
+            {isPollingStatus && (
+              <div className="flex items-center text-xs text-muted-foreground">
+                <div className="w-2 h-2 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2"></div>
+                检查中...
+              </div>
+            )}
+          </div>
+          <div className="p-4 max-h-64 overflow-y-auto bg-card">
+            {creationLogs.length > 0 ? (
+              <div className="space-y-1 text-sm">
+                {creationLogs.map((log, index) => (
+                  <div key={index} className="leading-relaxed">
+                    {log}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground italic">
+                正在准备创建书籍...
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Audit Config Modal */}
       {showAuditConfigForm && auditConfig && (
         <div className="fixed inset-0 flex items-center justify-center z-[100] p-4">
@@ -418,7 +594,9 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
             <div className="flex items-center justify-between p-6 border-b border-border/50 shrink-0">
               <h2 className="text-xl font-bold">审计配置</h2>
               <button
-                onClick={() => setShowAuditConfigForm(false)}
+                onClick={() => {
+                  setShowAuditConfigForm(false);
+                }}
                 className="p-2 rounded-lg hover:bg-primary/10 transition-colors"
               >
                 <X size={20} />
@@ -1178,7 +1356,9 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
                 取消
               </button>
               <button
-                onClick={() => setShowAuditConfigForm(false)}
+                onClick={() => {
+                  setShowAuditConfigForm(false);
+                }}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
               >
                 <Save size={14} />
