@@ -37,10 +37,19 @@ export class PlannerAgent extends BaseAgent {
     const runtimeDir = join(storyDir, "runtime");
     await mkdir(runtimeDir, { recursive: true });
 
+    // 首先确定章节所属的分卷
+    const volumeId = await this.findVolumeIdForChapter(input.bookDir, input.chapterNumber);
+    if (!volumeId) {
+      throw new Error(`无法确定第 ${input.chapterNumber} 章所属的分卷`);
+    }
+
     const sourcePaths = {
       authorIntent: join(storyDir, "author_intent.md"),
       currentFocus: join(storyDir, "current_focus.md"),
       storyBible: join(storyDir, "story_bible.md"),
+      // 优先读取分卷详细大纲，这是章节规划的主要依据
+      volumeDetail: join(storyDir, `volume_${volumeId}_detail.md`),
+      // 总卷纲作为备用参考
       volumeOutline: join(storyDir, "volume_outline.md"),
       chapterSummaries: join(storyDir, "chapter_summaries.md"),
       bookRules: join(storyDir, "book_rules.md"),
@@ -51,6 +60,7 @@ export class PlannerAgent extends BaseAgent {
       authorIntent,
       currentFocus,
       storyBible,
+      volumeDetail,
       volumeOutline,
       chapterSummaries,
       bookRulesRaw,
@@ -59,14 +69,21 @@ export class PlannerAgent extends BaseAgent {
       this.readFileOrDefault(sourcePaths.authorIntent),
       this.readFileOrDefault(sourcePaths.currentFocus),
       this.readFileOrDefault(sourcePaths.storyBible),
+      this.readFileOrDefault(sourcePaths.volumeDetail),
       this.readFileOrDefault(sourcePaths.volumeOutline),
       this.readFileOrDefault(sourcePaths.chapterSummaries),
       this.readFileOrDefault(sourcePaths.bookRules),
       this.readFileOrDefault(sourcePaths.currentState),
     ]);
 
-    const outlineNode = this.findOutlineNode(volumeOutline, input.chapterNumber);
-    const matchedOutlineAnchor = this.hasMatchedOutlineAnchor(volumeOutline, input.chapterNumber);
+    // 优先使用分卷详细大纲，如果没有则报错
+    const outlineSource = volumeDetail !== "(文件尚未创建)" ? volumeDetail : null;
+    if (!outlineSource) {
+      throw new Error(`第 ${volumeId} 卷详细大纲不存在，无法生成章节规划。请先生成分卷详细大纲。`);
+    }
+
+    const outlineNode = this.findOutlineNode(outlineSource, input.chapterNumber);
+    const matchedOutlineAnchor = this.hasMatchedOutlineAnchor(outlineSource, input.chapterNumber);
     const goal = this.deriveGoal(input.externalContext, currentFocus, authorIntent, outlineNode, input.chapterNumber);
     const parsedRules = parseBookRules(bookRulesRaw);
     const mustKeep = this.collectMustKeep(currentState, storyBible);
@@ -93,7 +110,7 @@ export class PlannerAgent extends BaseAgent {
     const directives = this.buildStructuredDirectives({
       chapterNumber: input.chapterNumber,
       language: input.book.language,
-      volumeOutline,
+      volumeOutline: outlineSource,
       outlineNode,
       matchedOutlineAnchor,
       chapterSummaries,
@@ -690,14 +707,32 @@ export class PlannerAgent extends BaseAgent {
       this.renderHookBudget(activeHookCount, language),
     ].join("\n");
 
+    // Helper to clean markdown heading-like prefixes from content
+    const cleanMarkdownContent = (content: string): string => {
+      // Remove leading colons and full-width colons that might be mistaken for markdown
+      return content
+        .split('\n')
+        .map(line => {
+          const trimmed = line.trimStart();
+          if (trimmed.startsWith('：')) {
+            return line.replace(/^[\s]*：/, '');
+          }
+          if (trimmed.startsWith(':')) {
+            return line.replace(/^[\s]*:/, '');
+          }
+          return line;
+        })
+        .join('\n');
+    };
+
     return [
       "# Chapter Intent",
       "",
       "## Goal",
-      intent.goal,
+      cleanMarkdownContent(intent.goal),
       "",
       "## Outline Node",
-      intent.outlineNode ?? "(not found)",
+      intent.outlineNode ? cleanMarkdownContent(intent.outlineNode) : "(not found)",
       "",
       "## Must Keep",
       mustKeep,
@@ -740,5 +775,43 @@ export class PlannerAgent extends BaseAgent {
     } catch {
       return "(文件尚未创建)";
     }
+  }
+
+  /**
+   * 根据章节号查找所属的分卷ID
+   */
+  private async findVolumeIdForChapter(bookDir: string, chapterNumber: number): Promise<number | null> {
+    // 优先从元数据读取
+    const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+    try {
+      const metaContent = await readFile(metaPath, "utf-8");
+      const meta = JSON.parse(metaContent);
+      for (const vp of meta.volumePlans || []) {
+        if (chapterNumber >= vp.chapterRange.start && chapterNumber <= vp.chapterRange.end) {
+          return vp.volumeId;
+        }
+      }
+    } catch {
+      // 元数据读取失败，尝试从卷纲文件解析
+    }
+
+    // 尝试从总卷纲解析
+    const outlinePath = join(bookDir, "story", "volume_outline.md");
+    try {
+      const outlineContent = await readFile(outlinePath, "utf-8");
+      const volumeMatches = outlineContent.matchAll(/第\s*(\d+)\s*卷[\s\S]*?章节范围[：:]\s*(?:第)?(\d+)[\s-]*(?:章)?[\s-]*(?:第)?(\d+)(?:章)?/gi);
+      for (const match of volumeMatches) {
+        const volumeId = parseInt(match[1], 10);
+        const startCh = parseInt(match[2], 10);
+        const endCh = parseInt(match[3], 10);
+        if (chapterNumber >= startCh && chapterNumber <= endCh) {
+          return volumeId;
+        }
+      }
+    } catch {
+      // 卷纲读取失败
+    }
+
+    return null;
   }
 }

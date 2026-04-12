@@ -855,7 +855,18 @@ ${adjacentVolumes}
       },
     ], { maxTokens: 8192, temperature: 0.7 });
 
-    return { volumeOutline: response.content.trim() };
+    // Filter out <think> and <thinking> tags from LLM response
+    let filteredContent = response.content.trim();
+    // Remove <think>...</think> tags (used by some LLM models)
+    const thinkRegex = /<think>[\s\S]*?<\/think>/gi;
+    filteredContent = filteredContent.replace(thinkRegex, "");
+    // Remove <thinking>...</thinking> tags (used by some LLM models)
+    const thinkingRegex = /<thinking>[\s\S]*?<\/thinking>/gi;
+    filteredContent = filteredContent.replace(thinkingRegex, "");
+    // Clean up any empty lines left after removal
+    filteredContent = filteredContent.replace(/\n{3,}/g, "\n\n").trim();
+
+    return { volumeOutline: filteredContent };
   }
 
   private async loadExistingChapters(bookDir: string): Promise<string> {
@@ -1039,7 +1050,18 @@ ${targetVolumeInfo}
       },
     ], { maxTokens: 8192, temperature: 0.7 });
 
-    return { volumeDetail: response.content.trim() };
+    // Filter out <think> and <thinking> tags from LLM response
+    let filteredContent = response.content.trim();
+    // Remove <think>...</think> tags (used by some LLM models)
+    const thinkRegex = /<think>[\s\S]*?<\/think>/gi;
+    filteredContent = filteredContent.replace(thinkRegex, "");
+    // Remove <thinking>...</thinking> tags (used by some LLM models)
+    const thinkingRegex = /<thinking>[\s\S]*?<\/thinking>/gi;
+    filteredContent = filteredContent.replace(thinkingRegex, "");
+    // Clean up any empty lines left after removal
+    filteredContent = filteredContent.replace(/\n{3,}/g, "\n\n").trim();
+
+    return { volumeDetail: filteredContent };
   }
 
   private extractVolumeInfo(outline: string, volumeId: number): string {
@@ -1279,11 +1301,22 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
   }
 
   private parseSections(content: string): ArchitectOutput {
+    // Filter out <think> and <thinking> tags from LLM response
+    let filteredContent = content;
+    // Remove <think>...</think> tags (used by some LLM models)
+    const thinkRegex = /<think>[\s\S]*?<\/think>/gi;
+    filteredContent = filteredContent.replace(thinkRegex, "");
+    // Remove <thinking>...</thinking> tags (used by some LLM models)
+    const thinkingRegex = /<thinking>[\s\S]*?<\/thinking>/gi;
+    filteredContent = filteredContent.replace(thinkingRegex, "");
+    // Clean up any empty lines left after removal
+    filteredContent = filteredContent.replace(/\n{3,}/g, "\n\n").trim();
+
     const parsedSections = new Map<string, string>();
     
     // 改进的正则表达式，更灵活地匹配部分标记
     const sectionPattern = /\s*===\s*SECTION\s*[：:]?\s*([^\n=]+?)\s*===\s*/gim;
-    const matches = [...content.matchAll(sectionPattern)];
+    const matches = [...filteredContent.matchAll(sectionPattern)];
 
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i]!;
@@ -1312,31 +1345,31 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
       if (!section) {
         if (name === "story_bible") {
           // 尝试从内容中提取故事圣经部分
-          const storyBibleMatch = content.match(/(story[\s_]*bible[\s\S]*?)(?=\s*===|$)/i);
+          const storyBibleMatch = filteredContent.match(/(story[\s_]*bible[\s\S]*?)(?=\s*===|$)/i);
           if (storyBibleMatch) {
             section = storyBibleMatch[1].trim();
           }
         } else if (name === "volume_outline") {
           // 尝试从内容中提取卷纲部分
-          const outlineMatch = content.match(/(volume[\s_]*outline[\s\S]*?)(?=\s*===|$)/i);
+          const outlineMatch = filteredContent.match(/(volume[\s_]*outline[\s\S]*?)(?=\s*===|$)/i);
           if (outlineMatch) {
             section = outlineMatch[1].trim();
           }
         } else if (name === "book_rules") {
           // 尝试从内容中提取书籍规则部分
-          const rulesMatch = content.match(/(book[\s_]*rules[\s\S]*?)(?=\s*===|$)/i);
+          const rulesMatch = filteredContent.match(/(book[\s_]*rules[\s\S]*?)(?=\s*===|$)/i);
           if (rulesMatch) {
             section = rulesMatch[1].trim();
           }
         } else if (name === "current_state") {
           // 尝试从内容中提取当前状态部分
-          const stateMatch = content.match(/(current[\s_]*state[\s\S]*?)(?=\s*===|$)/i);
+          const stateMatch = filteredContent.match(/(current[\s_]*state[\s\S]*?)(?=\s*===|$)/i);
           if (stateMatch) {
             section = stateMatch[1].trim();
           }
         } else if (name === "pending_hooks") {
           // 尝试从内容中提取伏笔部分
-          const hooksMatch = content.match(/(pending[\s_]*hooks[\s\S]*?)(?=\s*===|$)/i);
+          const hooksMatch = filteredContent.match(/(pending[\s_]*hooks[\s\S]*?)(?=\s*===|$)/i);
           if (hooksMatch) {
             section = hooksMatch[1].trim();
           }

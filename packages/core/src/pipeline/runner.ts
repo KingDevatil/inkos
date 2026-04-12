@@ -13,6 +13,7 @@ import { WriterAgent, type WriteChapterInput, type WriteChapterOutput } from "..
 import { LengthNormalizerAgent } from "../agents/length-normalizer.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
+import { ChapterPlanAuditor } from "../agents/chapter-plan-auditor.js";
 import { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
 import { StateValidatorAgent, type ValidationResult, type ValidationWarning } from "../agents/state-validator.js";
 import { RadarAgent } from "../agents/radar.js";
@@ -230,6 +231,10 @@ export class PipelineRunner {
 
   private logWarn(language: LengthLanguage, message: { zh: string; en: string }): void {
     this.config.logger?.warn(this.localize(language, message));
+  }
+
+  private logError(language: LengthLanguage, message: { zh: string; en: string }): void {
+    this.config.logger?.error(this.localize(language, message));
   }
 
   private async tryGenerateStyleGuide(
@@ -973,24 +978,101 @@ export class PipelineRunner {
       en: `Generating chapter plans for volume ${volumeId}`,
     });
 
-    // 读取卷纲，确定本卷的章节范围
-    const outlinePath = join(bookDir, "story", "volume_outline.md");
-    const outlineContent = await readFile(outlinePath, "utf-8");
+    // 优先从 .volume-plans-meta.json 读取章节范围
+    const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+    let startChapter: number;
+    let endChapter: number;
+    let chapterRangeSource = "meta";
     
-    // 解析卷纲，找到指定卷的章节范围
-    const volumeRegex = new RegExp(`### 第${volumeId}卷[\s\S]*?章节范围：(\d+)-(\d+)`, "g");
-    const match = volumeRegex.exec(outlineContent);
-    if (!match) {
-      throw new Error(`Volume ${volumeId} not found in outline`);
+    try {
+      const metaContent = await readFile(metaPath, "utf-8");
+      const meta = JSON.parse(metaContent);
+      const volumeMeta = meta.volumePlans?.find((vp: any) => vp.volumeId === volumeId);
+      
+      if (volumeMeta?.chapterRange) {
+        startChapter = volumeMeta.chapterRange.start;
+        endChapter = volumeMeta.chapterRange.end;
+        this.logInfo(stageLanguage, {
+          zh: `从元数据读取第 ${volumeId} 卷章节范围：第${startChapter}-${endChapter}章`,
+          en: `Read volume ${volumeId} chapter range from metadata: chapters ${startChapter}-${endChapter}`,
+        });
+      } else {
+        throw new Error(`Volume ${volumeId} chapter range not found in metadata`);
+      }
+    } catch (metaError) {
+      // 元数据读取失败，回退到从卷纲文件解析
+      this.logWarn(stageLanguage, {
+        zh: `无法从元数据读取章节范围，尝试从卷纲文件解析: ${metaError instanceof Error ? metaError.message : String(metaError)}`,
+        en: `Failed to read chapter range from metadata, falling back to outline file: ${metaError instanceof Error ? metaError.message : String(metaError)}`,
+      });
+      
+      // 优先读取分卷详细卷纲
+      const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      
+      try {
+        // 尝试读取分卷详细卷纲
+        const detailContent = await readFile(detailPath, "utf-8");
+        this.logInfo(stageLanguage, {
+          zh: `使用第 ${volumeId} 卷详细卷纲解析章节范围`,
+          en: `Using volume ${volumeId} detail outline to parse chapter range`,
+        });
+        
+        // 从详细卷纲中解析章节范围
+        const rangeMatch = detailContent.match(/章节范围[：:]\s*(?:第)?(\d+)[\s-]*(?:章)?[\s-]*(?:第)?(\d+)(?:章)?/i);
+        if (rangeMatch) {
+          startChapter = parseInt(rangeMatch[1], 10);
+          endChapter = parseInt(rangeMatch[2], 10);
+          chapterRangeSource = "detail";
+        } else {
+          throw new Error(`Chapter range not found in detail outline`);
+        }
+      } catch {
+        // 详细卷纲不存在或解析失败，读取总卷纲
+        const outlineContent = await readFile(outlinePath, "utf-8");
+        this.logInfo(stageLanguage, {
+          zh: `使用总卷纲解析第 ${volumeId} 卷章节范围`,
+          en: `Using main outline to parse volume ${volumeId} chapter range`,
+        });
+        
+        // 解析卷纲，找到指定卷的章节范围
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?章节范围[：:](\\d+)-(\\d+)`, "i");
+        const match = volumeRegex.exec(outlineContent);
+        if (!match) {
+          throw new Error(`Volume ${volumeId} not found in outline`);
+        }
+        startChapter = parseInt(match[1], 10);
+        endChapter = parseInt(match[2], 10);
+        chapterRangeSource = "outline";
+      }
     }
-    
-    const startChapter = parseInt(match[1], 10);
-    const endChapter = parseInt(match[2], 10);
 
     this.logInfo(stageLanguage, {
-      zh: `第 ${volumeId} 卷章节范围：第${startChapter}-${endChapter}章，共${endChapter - startChapter + 1}章`,
-      en: `Volume ${volumeId} chapter range: chapters ${startChapter}-${endChapter}, total ${endChapter - startChapter + 1} chapters`,
+      zh: `第 ${volumeId} 卷章节范围：第${startChapter}-${endChapter}章，共${endChapter - startChapter + 1}章（来源：${chapterRangeSource}）`,
+      en: `Volume ${volumeId} chapter range: chapters ${startChapter}-${endChapter}, total ${endChapter - startChapter + 1} chapters (source: ${chapterRangeSource})`,
     });
+
+    // 加载审计配置
+    const { loadAuditConfig } = await import("../config/audit-config.js");
+    const auditConfig = loadAuditConfig(bookDir);
+
+    // 读取卷纲和详细卷纲（用于审计）
+    const outlinePath = join(bookDir, "story", "volume_outline.md");
+    const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+    let volumeOutline = "";
+    let volumeDetail = "";
+    
+    try {
+      volumeOutline = await readFile(outlinePath, "utf-8");
+    } catch {
+      // 卷纲不存在
+    }
+    
+    try {
+      volumeDetail = await readFile(detailPath, "utf-8");
+    } catch {
+      // 详细卷纲不存在
+    }
 
     // 生成章节规划
     for (let chapterNumber = startChapter; chapterNumber <= endChapter; chapterNumber++) {
@@ -1002,17 +1084,96 @@ export class PipelineRunner {
           en: `Generating plan for chapter ${chapterNumber}...`,
         });
 
-        const planner = new PlannerAgent(this.config);
-        await planner.planChapter({
-          book,
-          bookDir,
-          chapterNumber,
-        });
+        let attempt = 0;
+        let auditResult = null;
+        let planGenerated = false;
 
-        this.logInfo(stageLanguage, {
-          zh: `✓ 已生成第 ${chapterNumber} 章规划`,
-          en: `✓ Generated plan for chapter ${chapterNumber}`,
-        });
+        do {
+          // 生成章节规划
+          const planner = new PlannerAgent(this.config);
+          await planner.planChapter({
+            book,
+            bookDir,
+            chapterNumber,
+          });
+
+          // 如果审计未启用，直接通过
+          if (!auditConfig.chapterPlanAudit.enabled) {
+            planGenerated = true;
+            break;
+          }
+
+          // 读取生成的章节规划
+          const planPath = join(bookDir, "story", "runtime", `chapter-${String(chapterNumber).padStart(4, "0")}.intent.md`);
+          let chapterPlan;
+          try {
+            const planContent = await readFile(planPath, "utf-8");
+            chapterPlan = this.parseChapterIntent(planContent);
+          } catch {
+            this.logWarn(stageLanguage, {
+              zh: `无法读取第 ${chapterNumber} 章规划文件，跳过审计`,
+              en: `Cannot read chapter ${chapterNumber} plan file, skipping audit`,
+            });
+            planGenerated = true;
+            break;
+          }
+
+          // 审计章节规划
+          this.logInfo(stageLanguage, {
+            zh: `正在审计第 ${chapterNumber} 章规划（第 ${attempt + 1} 次）...`,
+            en: `Auditing chapter ${chapterNumber} plan (attempt ${attempt + 1})...`,
+          });
+
+          const auditor = new ChapterPlanAuditor(this.agentCtxFor("chapter-plan-auditor", bookId));
+          auditResult = await auditor.audit({
+            chapterNumber,
+            chapterPlan: chapterPlan as import("../models/input-governance.js").ChapterIntent,
+            volumeOutline,
+            volumeDetail,
+            bookRules: await this.readBookRules(bookDir),
+            config: auditConfig.chapterPlanAudit,
+          });
+
+          if (auditResult.passed) {
+            this.logInfo(stageLanguage, {
+              zh: `✓ 第 ${chapterNumber} 章规划审计通过（${auditResult.score}分）`,
+              en: `✓ Chapter ${chapterNumber} plan audit passed (${auditResult.score} points)`,
+            });
+            // 保存审计成功状态
+            await this.saveChapterPlanAuditSuccess(bookDir, chapterNumber, auditResult);
+            planGenerated = true;
+            break;
+          } else if (attempt < auditConfig.chapterPlanAudit.maxRetries) {
+            this.logWarn(stageLanguage, {
+              zh: `✗ 第 ${chapterNumber} 章规划审计未通过（${auditResult.score}分），正在重新生成...`,
+              en: `✗ Chapter ${chapterNumber} plan audit failed (${auditResult.score} points), regenerating...`,
+            });
+            // 删除失败的规划文件，以便重新生成
+            try {
+              await unlink(planPath);
+            } catch {
+              // 忽略删除错误
+            }
+          }
+
+          attempt++;
+        } while (attempt <= auditConfig.chapterPlanAudit.maxRetries);
+
+        if (!planGenerated) {
+          // 超过最大重试次数，标记为失败
+          this.logError(stageLanguage, {
+            zh: `✗ 第 ${chapterNumber} 章规划审计连续${auditConfig.chapterPlanAudit.maxRetries}次未通过，已终止`,
+            en: `✗ Chapter ${chapterNumber} plan audit failed ${auditConfig.chapterPlanAudit.maxRetries} times, terminated`,
+          });
+          
+          // 保存审计失败信息到元数据
+          await this.saveChapterPlanAuditFailure(bookDir, chapterNumber, auditResult);
+        } else {
+          this.logInfo(stageLanguage, {
+            zh: `✓ 已生成第 ${chapterNumber} 章规划`,
+            en: `✓ Generated plan for chapter ${chapterNumber}`,
+          });
+        }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         this.logWarn(stageLanguage, {
@@ -1028,6 +1189,146 @@ export class PipelineRunner {
     });
   }
 
+  async generateSingleChapterPlan(bookId: string, volumeId: number, chapterNumber: number): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const stageLanguage = await this.resolveBookLanguage(book);
+
+    this.logStage(stageLanguage, {
+      zh: `为第 ${volumeId} 卷第 ${chapterNumber} 章生成章节规划`,
+      en: `Generating chapter plan for volume ${volumeId} chapter ${chapterNumber}`,
+    });
+
+    // 加载审计配置
+    const { loadAuditConfig } = await import("../config/audit-config.js");
+    const auditConfig = loadAuditConfig(bookDir);
+
+    // 读取卷纲和详细卷纲（用于审计）
+    const outlinePath = join(bookDir, "story", "volume_outline.md");
+    const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+    let volumeOutline = "";
+    let volumeDetail = "";
+    
+    try {
+      volumeOutline = await readFile(outlinePath, "utf-8");
+    } catch {
+      // 卷纲不存在
+    }
+    
+    try {
+      volumeDetail = await readFile(detailPath, "utf-8");
+    } catch {
+      // 详细卷纲不存在
+    }
+
+    try {
+      this.logInfo(stageLanguage, {
+        zh: `正在生成第 ${chapterNumber} 章规划...`,
+        en: `Generating plan for chapter ${chapterNumber}...`,
+      });
+
+      let attempt = 0;
+      let auditResult = null;
+      let planGenerated = false;
+
+      do {
+        // 生成章节规划
+        const planner = new PlannerAgent(this.config);
+        await planner.planChapter({
+          book,
+          bookDir,
+          chapterNumber,
+        });
+
+        // 如果审计未启用，直接通过
+        if (!auditConfig.chapterPlanAudit.enabled) {
+          planGenerated = true;
+          break;
+        }
+
+        // 读取生成的章节规划
+        const planPath = join(bookDir, "story", "runtime", `chapter-${String(chapterNumber).padStart(4, "0")}.intent.md`);
+        let chapterPlan;
+        try {
+          const planContent = await readFile(planPath, "utf-8");
+          chapterPlan = this.parseChapterIntent(planContent);
+        } catch {
+          this.logWarn(stageLanguage, {
+            zh: `无法读取第 ${chapterNumber} 章规划文件，跳过审计`,
+            en: `Cannot read chapter ${chapterNumber} plan file, skipping audit`,
+          });
+          planGenerated = true;
+          break;
+        }
+
+        // 审计章节规划
+        this.logInfo(stageLanguage, {
+          zh: `正在审计第 ${chapterNumber} 章规划（第 ${attempt + 1} 次）...`,
+          en: `Auditing chapter ${chapterNumber} plan (attempt ${attempt + 1})...`,
+        });
+
+        const { ChapterPlanAuditor } = await import("../agents/chapter-plan-auditor.js");
+        const auditor = new ChapterPlanAuditor(this.agentCtxFor("chapter-plan-auditor", bookId));
+        auditResult = await auditor.audit({
+          chapterNumber,
+          chapterPlan: chapterPlan as import("../models/input-governance.js").ChapterIntent,
+          volumeOutline,
+          volumeDetail,
+          bookRules: await this.readBookRules(bookDir),
+          config: auditConfig.chapterPlanAudit,
+        });
+
+        if (auditResult.passed) {
+          this.logInfo(stageLanguage, {
+            zh: `✓ 第 ${chapterNumber} 章规划审计通过（${auditResult.score}分）`,
+            en: `✓ Chapter ${chapterNumber} plan audit passed (${auditResult.score} points)`,
+          });
+          // 保存审计成功状态
+          await this.saveChapterPlanAuditSuccess(bookDir, chapterNumber, auditResult);
+          planGenerated = true;
+          break;
+        } else if (attempt < auditConfig.chapterPlanAudit.maxRetries) {
+          this.logWarn(stageLanguage, {
+            zh: `✗ 第 ${chapterNumber} 章规划审计未通过（${auditResult.score}分），正在重新生成...`,
+            en: `✗ Chapter ${chapterNumber} plan audit failed (${auditResult.score} points), regenerating...`,
+          });
+          // 删除失败的规划文件，以便重新生成
+          try {
+            await unlink(planPath);
+          } catch {
+            // 忽略删除错误
+          }
+        }
+
+        attempt++;
+      } while (attempt <= auditConfig.chapterPlanAudit.maxRetries);
+
+      if (!planGenerated) {
+        // 超过最大重试次数，标记为失败
+        this.logError(stageLanguage, {
+          zh: `✗ 第 ${chapterNumber} 章规划审计连续${auditConfig.chapterPlanAudit.maxRetries}次未通过，已终止`,
+          en: `✗ Chapter ${chapterNumber} plan audit failed ${auditConfig.chapterPlanAudit.maxRetries} times, terminated`,
+        });
+        
+        // 保存审计失败信息到元数据
+        await this.saveChapterPlanAuditFailure(bookDir, chapterNumber, auditResult);
+        throw new Error(`Chapter ${chapterNumber} plan audit failed after ${auditConfig.chapterPlanAudit.maxRetries} retries`);
+      } else {
+        this.logInfo(stageLanguage, {
+          zh: `✓ 已生成第 ${chapterNumber} 章规划`,
+          en: `✓ Generated plan for chapter ${chapterNumber}`,
+        });
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logWarn(stageLanguage, {
+        zh: `✗ 生成第 ${chapterNumber} 章规划失败：${detail}`,
+        en: `✗ Failed to generate plan for chapter ${chapterNumber}: ${detail}`,
+      });
+      throw error;
+    }
+  }
+
   async regenerateVolumeChapters(bookId: string, volumeId: number): Promise<void> {
     const book = await this.state.loadBookConfig(bookId);
     const bookDir = this.state.bookDir(bookId);
@@ -1038,19 +1339,74 @@ export class PipelineRunner {
       en: `Rewriting chapters for volume ${volumeId}`,
     });
 
-    // 读取卷纲，确定本卷的章节范围
-    const outlinePath = join(bookDir, "story", "volume_outline.md");
-    const outlineContent = await readFile(outlinePath, "utf-8");
+    // 优先从 .volume-plans-meta.json 读取章节范围
+    const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+    let startChapter: number;
+    let endChapter: number;
+    let chapterRangeSource = "meta";
     
-    // 解析卷纲，找到指定卷的章节范围
-    const volumeRegex = new RegExp(`### 第${volumeId}卷[\s\S]*?章节范围：(\d+)-(\d+)`, "g");
-    const match = volumeRegex.exec(outlineContent);
-    if (!match) {
-      throw new Error(`Volume ${volumeId} not found in outline`);
+    try {
+      const metaContent = await readFile(metaPath, "utf-8");
+      const meta = JSON.parse(metaContent);
+      const volumeMeta = meta.volumePlans?.find((vp: any) => vp.volumeId === volumeId);
+      
+      if (volumeMeta?.chapterRange) {
+        startChapter = volumeMeta.chapterRange.start;
+        endChapter = volumeMeta.chapterRange.end;
+        this.logInfo(stageLanguage, {
+          zh: `从元数据读取第 ${volumeId} 卷章节范围：第${startChapter}-${endChapter}章`,
+          en: `Read volume ${volumeId} chapter range from metadata: chapters ${startChapter}-${endChapter}`,
+        });
+      } else {
+        throw new Error(`Volume ${volumeId} chapter range not found in metadata`);
+      }
+    } catch (metaError) {
+      // 元数据读取失败，回退到从卷纲文件解析
+      this.logWarn(stageLanguage, {
+        zh: `无法从元数据读取章节范围，尝试从卷纲文件解析: ${metaError instanceof Error ? metaError.message : String(metaError)}`,
+        en: `Failed to read chapter range from metadata, falling back to outline file: ${metaError instanceof Error ? metaError.message : String(metaError)}`,
+      });
+      
+      // 优先读取分卷详细卷纲
+      const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      
+      try {
+        // 尝试读取分卷详细卷纲
+        const detailContent = await readFile(detailPath, "utf-8");
+        this.logInfo(stageLanguage, {
+          zh: `使用第 ${volumeId} 卷详细卷纲确定章节范围`,
+          en: `Using volume ${volumeId} detail outline to determine chapter range`,
+        });
+        
+        // 从详细卷纲中解析章节范围
+        const rangeMatch = detailContent.match(/章节范围[：:]\s*(?:第)?(\d+)[\s-]*(?:章)?[\s-]*(?:第)?(\d+)(?:章)?/i);
+        if (rangeMatch) {
+          startChapter = parseInt(rangeMatch[1], 10);
+          endChapter = parseInt(rangeMatch[2], 10);
+          chapterRangeSource = "detail";
+        } else {
+          throw new Error(`Chapter range not found in detail outline`);
+        }
+      } catch {
+        // 详细卷纲不存在或解析失败，读取总卷纲
+        const outlineContent = await readFile(outlinePath, "utf-8");
+        this.logInfo(stageLanguage, {
+          zh: `使用总卷纲确定第 ${volumeId} 卷章节范围`,
+          en: `Using main outline to determine volume ${volumeId} chapter range`,
+        });
+        
+        // 解析卷纲，找到指定卷的章节范围
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?章节范围[：:](\\d+)-(\\d+)`, "i");
+        const match = volumeRegex.exec(outlineContent);
+        if (!match) {
+          throw new Error(`Volume ${volumeId} not found in outline`);
+        }
+        startChapter = parseInt(match[1], 10);
+        endChapter = parseInt(match[2], 10);
+        chapterRangeSource = "outline";
+      }
     }
-    
-    const startChapter = parseInt(match[1], 10);
-    const endChapter = parseInt(match[2], 10);
 
     // 重写本卷所有章节
     for (let chapterNumber = startChapter; chapterNumber <= endChapter; chapterNumber++) {
@@ -3642,5 +3998,163 @@ ${matrix}`,
     const lines = raw.split("\n");
     const contentStart = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
     return contentStart >= 0 ? lines.slice(contentStart).join("\n") : raw;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chapter Plan Audit Helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 解析章节规划文件内容为 ChapterIntent 对象
+   */
+  private parseChapterIntent(content: string): {
+    goal: string;
+    outlineNode?: string;
+    mustKeep: string[];
+    mustAvoid: string[];
+    arcDirective?: string;
+    sceneDirective?: string;
+    moodDirective?: string;
+    titleDirective?: string;
+  } {
+    // 简单的解析逻辑，提取关键字段
+    const lines = content.split("\n");
+    const intent: {
+      goal: string;
+      outlineNode?: string;
+      mustKeep: string[];
+      mustAvoid: string[];
+      arcDirective?: string;
+      sceneDirective?: string;
+      moodDirective?: string;
+      titleDirective?: string;
+    } = {
+      goal: "",
+      mustKeep: [],
+      mustAvoid: [],
+    };
+
+    let currentSection: keyof typeof intent | null = null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("## 章节目标")) {
+        currentSection = "goal";
+      } else if (trimmed.startsWith("## 大纲节点")) {
+        currentSection = "outlineNode";
+      } else if (trimmed.startsWith("## 必须保持")) {
+        currentSection = "mustKeep";
+      } else if (trimmed.startsWith("## 必须避免")) {
+        currentSection = "mustAvoid";
+      } else if (trimmed.startsWith("## 弧线指令")) {
+        currentSection = "arcDirective";
+      } else if (trimmed.startsWith("## 场景指令")) {
+        currentSection = "sceneDirective";
+      } else if (trimmed.startsWith("## 情绪指令")) {
+        currentSection = "moodDirective";
+      } else if (trimmed.startsWith("## 标题指令")) {
+        currentSection = "titleDirective";
+      } else if (currentSection && trimmed && !trimmed.startsWith("#")) {
+        if (currentSection === "mustKeep" || currentSection === "mustAvoid") {
+          intent[currentSection].push(trimmed);
+        } else {
+          intent[currentSection] = trimmed;
+        }
+      }
+    }
+
+    return intent;
+  }
+
+  /**
+   * 读取书籍规则
+   */
+  private async readBookRules(bookDir: string): Promise<import("../models/book-rules.js").BookRules> {
+    const { readBookRules } = await import("../agents/rules-reader.js");
+    const parsed = await readBookRules(bookDir);
+    return parsed?.rules ?? {
+      version: "1.0",
+      prohibitions: [],
+      chapterTypesOverride: [],
+      fatigueWordsOverride: [],
+      additionalAuditDimensions: [],
+      enableFullCastTracking: false,
+      allowedDeviations: [],
+    };
+  }
+
+  /**
+   * 保存章节规划审计失败信息
+   */
+  private async saveChapterPlanAuditFailure(
+    bookDir: string,
+    chapterNumber: number,
+    auditResult: import("../config/audit-config.js").ChapterPlanAuditResult | null,
+  ): Promise<void> {
+    const metaPath = join(bookDir, "story", ".chapter-plan-audit-failures.json");
+    let failures: Record<string, unknown> = {};
+
+    try {
+      const content = await readFile(metaPath, "utf-8");
+      failures = JSON.parse(content);
+    } catch {
+      // 文件不存在，使用空对象
+    }
+
+    failures[String(chapterNumber)] = {
+      chapterNumber,
+      timestamp: new Date().toISOString(),
+      score: auditResult?.score ?? 0,
+      passed: false,
+      issues: auditResult?.issues ?? [],
+      summary: auditResult?.summary ?? "审计失败",
+    };
+
+    await writeFile(metaPath, JSON.stringify(failures, null, 2), "utf-8");
+  }
+
+  /**
+   * 保存章节规划审计成功信息
+   */
+  private async saveChapterPlanAuditSuccess(
+    bookDir: string,
+    chapterNumber: number,
+    auditResult: import("../config/audit-config.js").ChapterPlanAuditResult | null,
+  ): Promise<void> {
+    const metaPath = join(bookDir, "story", ".chapter-plan-audit-failures.json");
+    let failures: Record<string, unknown> = {};
+
+    try {
+      const content = await readFile(metaPath, "utf-8");
+      failures = JSON.parse(content);
+    } catch {
+      // 文件不存在，使用空对象
+    }
+
+    // 删除该章节的失败记录（如果存在）
+    delete failures[String(chapterNumber)];
+
+    await writeFile(metaPath, JSON.stringify(failures, null, 2), "utf-8");
+
+    // 同时保存成功记录到另一个文件
+    const successMetaPath = join(bookDir, "story", ".chapter-plan-audit-success.json");
+    let successes: Record<string, unknown> = {};
+
+    try {
+      const content = await readFile(successMetaPath, "utf-8");
+      successes = JSON.parse(content);
+    } catch {
+      // 文件不存在，使用空对象
+    }
+
+    successes[String(chapterNumber)] = {
+      chapterNumber,
+      timestamp: new Date().toISOString(),
+      score: auditResult?.score ?? 0,
+      passed: true,
+      summary: auditResult?.summary ?? "审计通过",
+    };
+
+    await writeFile(successMetaPath, JSON.stringify(successes, null, 2), "utf-8");
   }
 }

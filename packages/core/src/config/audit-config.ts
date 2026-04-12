@@ -53,6 +53,50 @@ export interface FoundationReviewConfig {
   };
 }
 
+// 章节规划审计维度
+export interface ChapterPlanAuditDimension {
+  id: string;                          // 维度ID
+  name: string;                        // 维度名称
+  enabled: boolean;                    // 是否启用
+  weight: number;                      // 权重
+  severity: "critical" | "warning" | "info";  // 严重程度
+  description: string;                 // 维度说明
+  checkContent: string;                // 检测内容说明
+}
+
+// 章节规划审计配置
+export interface ChapterPlanAuditConfig {
+  enabled: boolean;                    // 是否启用章节规划审计
+  maxRetries: number;                  // 最大重试次数（默认3）
+  passThreshold: number;               // 通过阈值（默认80）
+  dimensionFloor: number;              // 单个维度最低分（默认60）
+  dimensions: ChapterPlanAuditDimension[];  // 10个维度：Critical 4个 + Warning 4个 + Info 2个
+}
+
+// 章节规划审计结果
+export interface ChapterPlanAuditResult {
+  passed: boolean;
+  score: number;
+  dimensions: ChapterPlanAuditDimensionResult[];
+  issues: ChapterPlanAuditIssue[];
+  summary: string;
+}
+
+export interface ChapterPlanAuditDimensionResult {
+  id: string;
+  name: string;
+  score: number;
+  passed: boolean;
+  feedback?: string;
+}
+
+export interface ChapterPlanAuditIssue {
+  dimensionId: string;
+  severity: "critical" | "warning" | "info";
+  description: string;
+  suggestion?: string;
+}
+
 // 审计通过评判标准类型
 export interface AuditPassCriteria {
   // 章节审计通过标准
@@ -77,6 +121,7 @@ export interface AuditConfig {
   validationRules: ValidationRules;
   passCriteria: AuditPassCriteria;
   foundationReview: FoundationReviewConfig;
+  chapterPlanAudit: ChapterPlanAuditConfig; // 新增：章节规划审计配置
 }
 
 // 默认审计维度 - 按 severity 排序: critical > warning > info
@@ -148,6 +193,85 @@ const DEFAULT_VALIDATION_RULES: ValidationRules = {
   maxParagraphLength: 300,
 };
 
+// 默认章节规划审计维度（10个精简维度）
+const DEFAULT_CHAPTER_PLAN_DIMENSIONS: ChapterPlanAuditDimension[] = [
+  // Critical - 严重问题（4个）
+  {
+    id: "outlineDeviation",
+    name: "大纲偏离检测",
+    enabled: true,
+    weight: 1.0,
+    severity: "critical",
+    description: "章节规划是否偏离卷纲设定",
+    checkContent: "章节目标是否与卷纲中的章节描述一致"
+  },
+  {
+    id: "timeline",
+    name: "时间线一致性",
+    enabled: true,
+    weight: 1.0,
+    severity: "critical",
+    description: "章节时间线是否与整体时间线冲突",
+    checkContent: "章节时间设定是否与前序章节冲突"
+  },
+  {
+    id: "settingConflict",
+    name: "设定冲突",
+    enabled: true,
+    weight: 1.0,
+    severity: "critical",
+    description: "章节设定是否与世界观冲突",
+    checkContent: "章节中的设定是否违反世界观规则"
+  },
+  {
+    id: "mainPlotConflict",
+    name: "主线冲突",
+    enabled: true,
+    weight: 1.0,
+    severity: "critical",
+    description: "章节是否与主线剧情冲突",
+    checkContent: "章节内容是否与主线剧情发展冲突"
+  },
+  // Warning - 警告问题（4个）
+  {
+    id: "foreshadowing",
+    name: "伏笔处理",
+    enabled: true,
+    weight: 1.0,
+    severity: "warning",
+    description: "章节是否合理处理伏笔",
+    checkContent: "是否处理了前期埋下的活跃伏笔"
+  },
+
+  {
+    id: "hookAlignment",
+    name: "钩子对齐",
+    enabled: true,
+    weight: 1.0,
+    severity: "warning",
+    description: "章节是否与活跃钩子对齐",
+    checkContent: "是否对齐了当前活跃的钩子议程"
+  },
+  {
+    id: "pacing",
+    name: "节奏合理性",
+    enabled: true,
+    weight: 1.0,
+    severity: "warning",
+    description: "章节节奏是否合理",
+    checkContent: "章节类型（过渡/高潮）与内容设定是否匹配"
+  },
+];
+
+// 默认章节规划审计配置
+export const DEFAULT_CHAPTER_PLAN_AUDIT: ChapterPlanAuditConfig = {
+  enabled: false,                   // 默认禁用章节规划审计
+  maxRetries: 3,                    // 最大重试次数（默认3）
+  passThreshold: 80,                // 通过阈值（默认80）
+  dimensionFloor: 60,               // 单个维度最低分（默认60）
+  dimensions: DEFAULT_CHAPTER_PLAN_DIMENSIONS,
+};
+
 // 默认审计通过评判标准
 const DEFAULT_PASS_CRITERIA: AuditPassCriteria = {
   chapterAudit: {
@@ -183,6 +307,7 @@ const DEFAULT_CONFIG: AuditConfig = {
   validationRules: DEFAULT_VALIDATION_RULES,
   passCriteria: DEFAULT_PASS_CRITERIA,
   foundationReview: DEFAULT_FOUNDATION_REVIEW,
+  chapterPlanAudit: DEFAULT_CHAPTER_PLAN_AUDIT,
 };
 
 // 全局配置路径
@@ -297,12 +422,21 @@ function mergeConfigs(defaults: AuditConfig, global: AuditConfig, project: Audit
     },
   };
 
+  // 合并章节规划审计配置
+  const chapterPlanAudit: ChapterPlanAuditConfig = {
+    ...defaults.chapterPlanAudit,
+    ...global.chapterPlanAudit,
+    ...project.chapterPlanAudit,
+    dimensions: project.chapterPlanAudit?.dimensions || global.chapterPlanAudit?.dimensions || defaults.chapterPlanAudit.dimensions,
+  };
+
   return {
     dimensions,
     scoring,
     validationRules,
     passCriteria,
     foundationReview,
+    chapterPlanAudit,
   };
 }
 

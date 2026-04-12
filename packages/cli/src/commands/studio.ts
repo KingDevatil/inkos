@@ -1,9 +1,10 @@
 import { Command } from "commander";
 import { findProjectRoot, log, logError } from "../utils.js";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { platform } from "node:os";
 
 export interface StudioLaunchSpec {
   readonly studioEntry: string;
@@ -87,13 +88,81 @@ export async function resolveStudioLaunch(root: string): Promise<StudioLaunchSpe
   return null;
 }
 
+/**
+ * Kill existing InkOS Studio processes
+ */
+function killExistingInkOSProcesses(): void {
+  try {
+    const currentPid = process.pid;
+    const currentPlatform = platform();
+
+    if (currentPlatform === "win32") {
+      // Windows: Use PowerShell to find and kill Node processes running inkos
+      try {
+        // Get all node processes with their command lines
+        const result = execSync(
+          `powershell.exe -Command "Get-WmiObject Win32_Process -Filter \\"name='node.exe'\\" | Where-Object { $_.CommandLine -like '*inkos*' -or $_.CommandLine -like '*@actalk*inkos*' } | Select-Object ProcessId"`,
+          { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+        );
+
+        const lines = result.trim().split("\n");
+        for (const line of lines) {
+          const pid = parseInt(line.trim(), 10);
+          if (pid && pid !== currentPid && !isNaN(pid)) {
+            try {
+              execSync(`taskkill /F /PID ${pid}`, { stdio: "ignore" });
+              log(`Stopped existing InkOS process (PID: ${pid})`);
+            } catch {
+              // Process might already be dead
+            }
+          }
+        }
+      } catch {
+        // Ignore errors from process enumeration
+      }
+    } else {
+      // Unix-like systems (macOS, Linux)
+      try {
+        const result = execSync(
+          "ps aux | grep -E '(inkos|@actalk/inkos)' | grep -v grep | awk '{print $2}'",
+          { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+        );
+
+        const lines = result.trim().split("\n");
+        for (const line of lines) {
+          const pid = parseInt(line.trim(), 10);
+          if (pid && pid !== currentPid && !isNaN(pid)) {
+            try {
+              process.kill(pid, "SIGTERM");
+              log(`Stopped existing InkOS process (PID: ${pid})`);
+            } catch {
+              // Process might already be dead
+            }
+          }
+        }
+      } catch {
+        // Ignore errors from process enumeration
+      }
+    }
+  } catch {
+    // Best effort - don't fail if we can't kill existing processes
+  }
+}
+
 export const studioCommand = new Command("studio")
   .description("Start InkOS Studio web workbench")
   .option("-p, --port <port>", "Server port", "4567")
+  .option("-k, --keep-existing", "Keep existing InkOS processes running (don't kill them)")
   .action(async (opts) => {
     const root = findProjectRoot();
     const port = opts.port;
     const url = `http://localhost:${port}`;
+
+    // Kill existing InkOS processes unless --keep-existing is specified
+    if (!opts.keepExisting) {
+      killExistingInkOSProcesses();
+    }
+
     const launch = await resolveStudioLaunch(root);
 
     if (!launch) {

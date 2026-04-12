@@ -19,8 +19,30 @@ pnpm -v
 Write-Host "pnpm version check completed!"
 Write-Host
 
-# Step 3: Clean old builds
-Write-Host "Step 3: Cleaning old build files..."
+# Step 3: Check global link status
+Write-Host "Step 3: Checking global link status..."
+Write-Host "--------------------------------"
+$globalPackages = pnpm list -g 2>$null
+$inkosLinked = $globalPackages | Select-String "@actalk/inkos"
+$wrongInkosLinked = $globalPackages | Select-String "^inkos "
+
+if ($wrongInkosLinked) {
+    Write-Host "Found incorrect 'inkos' global link, removing..."
+    pnpm remove -g inkos
+    Write-Host "Incorrect link removed!"
+}
+
+if ($inkosLinked) {
+    Write-Host "@actalk/inkos is already linked globally."
+    Write-Host "Current link:"
+    pnpm list -g | Select-String "@actalk/inkos"
+} else {
+    Write-Host "@actalk/inkos is not linked globally yet."
+}
+Write-Host
+
+# Step 4: Clean old builds
+Write-Host "Step 4: Cleaning old build files..."
 Write-Host "--------------------------------"
 if (Test-Path "packages\cli\dist") {
     Write-Host "Removing packages\cli\dist..."
@@ -37,8 +59,8 @@ if (Test-Path "packages\studio\dist") {
 Write-Host "Old builds cleaned!"
 Write-Host
 
-# Step 4: Install dependencies
-Write-Host "Step 4: Installing project dependencies..."
+# Step 5: Install dependencies
+Write-Host "Step 5: Installing project dependencies..."
 Write-Host "--------------------------------"
 Write-Host "This may take a few minutes..."
 Write-Host "Press Ctrl+C to cancel..."
@@ -47,8 +69,8 @@ pnpm install
 Write-Host "Dependencies installed!"
 Write-Host
 
-# Step 5: Build project
-Write-Host "Step 5: Building project..."
+# Step 6: Build project
+Write-Host "Step 6: Building project..."
 Write-Host "--------------------------------"
 Write-Host "This may take a few minutes..."
 Write-Host "Press Ctrl+C to cancel..."
@@ -57,11 +79,46 @@ pnpm build
 Write-Host "Project built!"
 Write-Host
 
-# Step 6: Link to global
-Write-Host "Step 6: Linking to global npm..."
+# Step 7: Link to global
+Write-Host "Step 7: Linking CLI to global..."
 Write-Host "--------------------------------"
-pnpm link --global
-Write-Host "Global link successful!"
+
+# First unlink if already linked to avoid conflicts
+$cliPath = Join-Path $PSScriptRoot "packages\cli"
+Push-Location $cliPath
+
+try {
+    # Check if already linked
+    $linkedPath = pnpm list -g 2>$null | Select-String "@actalk/inkos.*link:"
+    if ($linkedPath) {
+        Write-Host "Unlinking existing global link..."
+        pnpm unlink --global 2>$null
+    }
+
+    Write-Host "Linking @actalk/inkos to global..."
+    pnpm link --global
+    Write-Host "Global link successful!"
+} finally {
+    Pop-Location
+}
+Write-Host
+
+# Step 8: Verify global link
+Write-Host "Step 8: Verifying global link..."
+Write-Host "--------------------------------"
+try {
+    $version = inkos --version 2>$null
+    if ($version) {
+        Write-Host "✓ inkos command is available globally!"
+        Write-Host "  Version: $version"
+    } else {
+        Write-Host "✗ inkos command not found in PATH"
+        Write-Host "  Please restart your terminal or run: refreshenv"
+    }
+} catch {
+    Write-Host "✗ inkos command not found in PATH"
+    Write-Host "  Please restart your terminal or run: refreshenv"
+}
 Write-Host
 
 Write-Host

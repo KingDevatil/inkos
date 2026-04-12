@@ -148,10 +148,19 @@ export {
   saveGlobalAuditConfig,
   saveProjectAuditConfig,
   getDefaultAuditConfig,
+  DEFAULT_CHAPTER_PLAN_AUDIT,
   type AuditConfig,
   type AuditDimension,
   type ScoringConfig,
   type ValidationRules,
   type AuditPassCriteria,
   type FoundationReviewConfig,
+  type ChapterPlanAuditConfig,
+  type ChapterPlanAuditDimension,
+  type ChapterPlanAuditResult,
+  type ChapterPlanAuditDimensionResult,
+  type ChapterPlanAuditIssue,
 } from "./config/audit-config.js";
+
+// Chapter Plan Auditor
+export { ChapterPlanAuditor, type ChapterPlanAuditParams } from "./agents/chapter-plan-auditor.js";

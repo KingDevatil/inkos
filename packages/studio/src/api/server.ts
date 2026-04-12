@@ -954,11 +954,131 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         maxConsecutiveLe: number;
         maxParagraphLength: number;
       };
+      chapterPlanAudit?: {
+        enabled: boolean;
+        maxRetries: number;
+        passThreshold: number;
+        dimensionFloor: number;
+        dimensions: Array<{
+          id: string;
+          name: string;
+          enabled: boolean;
+          weight: number;
+          severity: "critical" | "warning" | "info";
+          description: string;
+          checkContent: string;
+        }>;
+      };
     }>();
 
     try {
       await state.saveAuditConfig(id, body);
       return c.json({ ok: true });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Chapter Plan Audit Config Endpoints ---
+
+  // 获取章节规划审计配置
+  app.get("/api/books/:id/chapter-plan-audit-config", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const config = await state.loadAuditConfig(id);
+      if (config && (config as any).chapterPlanAudit) {
+        return c.json((config as any).chapterPlanAudit);
+      }
+      // Return default chapter plan audit config
+      const { DEFAULT_CHAPTER_PLAN_AUDIT } = await import("@actalk/inkos-core");
+      return c.json(DEFAULT_CHAPTER_PLAN_AUDIT);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // 保存章节规划审计配置
+  app.put("/api/books/:id/chapter-plan-audit-config", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{
+      enabled: boolean;
+      maxRetries: number;
+      passThreshold: number;
+      dimensionFloor: number;
+      dimensions: Array<{
+        id: string;
+        name: string;
+        enabled: boolean;
+        weight: number;
+        severity: "critical" | "warning" | "info";
+        description: string;
+        checkContent: string;
+      }>;
+    }>();
+
+    try {
+      const existingConfig = await state.loadAuditConfig(id);
+      const updatedConfig: any = {
+        ...existingConfig,
+        chapterPlanAudit: body,
+      };
+      await state.saveAuditConfig(id, updatedConfig);
+      return c.json({ ok: true });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // 手动触发单个章节规划审计
+  app.post("/api/books/:id/chapters/:chapterNumber/plan-audit", async (c) => {
+    const bookId = c.req.param("id");
+    const chapterNumber = parseInt(c.req.param("chapterNumber"), 10);
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(bookId);
+      
+      // 读取章节规划
+      const planPath = join(bookDir, "story", "runtime", `chapter-${String(chapterNumber).padStart(4, "0")}.intent.md`);
+      const planContent = await readFile(planPath, "utf-8");
+      const chapterPlan = pipeline["parseChapterIntent"](planContent);
+
+      // 读取卷纲和详细卷纲
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      const detailPath = join(bookDir, "story", `volume_${Math.ceil(chapterNumber / 30)}_detail.md`);
+      let volumeOutline = "";
+      let volumeDetail = "";
+      
+      try {
+        volumeOutline = await readFile(outlinePath, "utf-8");
+      } catch {
+        // 卷纲不存在
+      }
+      
+      try {
+        volumeDetail = await readFile(detailPath, "utf-8");
+      } catch {
+        // 详细卷纲不存在
+      }
+
+      // 加载审计配置
+      const { loadAuditConfig } = await import("@actalk/inkos-core");
+      const auditConfig = loadAuditConfig(bookDir);
+
+      // 执行审计
+      const { ChapterPlanAuditor } = await import("@actalk/inkos-core");
+      const auditor = new ChapterPlanAuditor(pipeline["agentCtxFor"]("chapter-plan-auditor", bookId));
+      
+      const result = await auditor.audit({
+        chapterNumber,
+        chapterPlan,
+        volumeOutline,
+        volumeDetail,
+        bookRules: await pipeline["readBookRules"](bookDir),
+        config: auditConfig.chapterPlanAudit,
+      });
+
+      return c.json(result);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
@@ -1774,7 +1894,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       try {
         const outlineContent = await readFile(outlinePath, "utf-8");
         // Find specific volume outline
-        const volumeRegex = new RegExp(`### 第${volumeId}卷 ([^\\n]+)[\\s\\S]*?章节范围：(\\d+)-(\\d+)[\\s\\S]*?([\\s\\S]*?)(?=### 第\\d+ 卷|$)`);
+        const volumeRegex = new RegExp(`### 第${volumeId}卷 ([^\\n]+)[\\\\s\\\\S]*?章节范围[：:](\\d+)-(\\d+)[\\\\s\\\\S]*?([\\\\s\\\\S]*?)(?=### 第\\d+卷|$)`);
         const match = volumeRegex.exec(outlineContent);
         
         if (match) {
@@ -1906,7 +2026,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         }
         
         // Parse chapter range from outline
-        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?(?:章节范围 | Chapter Range)[：:](\\d+)-(\\d+)`, "i");
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\\\s\\\\S]*?(?:章节范围|Chapter Range)[：:](\\d+)-(\\d+)`, "i");
         const match = volumeRegex.exec(outlineContent);
         if (!match) {
           return c.json({ error: `Volume ${volumeId} chapter range not found` }, 404);
@@ -1920,13 +2040,45 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const chapterPlans = [];
       const runtimeDir = join(bookDir, "story", "runtime");
       
+      // Read audit success and failure records
+      const successPath = join(bookDir, "story", ".chapter-plan-audit-success.json");
+      const failuresPath = join(bookDir, "story", ".chapter-plan-audit-failures.json");
+      let successes: Record<string, any> = {};
+      let failures: Record<string, any> = {};
+      
+      try {
+        const content = await readFile(successPath, "utf-8");
+        successes = JSON.parse(content);
+      } catch {
+        // File doesn't exist
+      }
+      
+      try {
+        const content = await readFile(failuresPath, "utf-8");
+        failures = JSON.parse(content);
+      } catch {
+        // File doesn't exist
+      }
+      
       for (let chapterNum = startChapter; chapterNum <= endChapter; chapterNum++) {
         const chapterPlanPath = join(runtimeDir, `chapter-${String(chapterNum).padStart(4, "0")}.intent.md`);
+        const chapterKey = String(chapterNum);
+        
         try {
           const content = await readFile(chapterPlanPath, "utf-8");
+          
+          // Determine audit status
+          let auditStatus: 'pending' | 'passed' | 'failed' = 'pending';
+          if (successes[chapterKey]) {
+            auditStatus = 'passed';
+          } else if (failures[chapterKey]) {
+            auditStatus = 'failed';
+          }
+          
           chapterPlans.push({
             chapterNumber: chapterNum,
-            content
+            content,
+            auditStatus
           });
         } catch {
           // Chapter plan doesn't exist yet
@@ -1986,7 +2138,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         }
         
         // Parse chapter range from outline
-        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?(?:章节范围 | Chapter Range)[：:](\\d+)-(\\d+)`, "i");
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\\\s\\\\S]*?(?:章节范围|Chapter Range)[：:](\\d+)-(\\d+)`, "i");
         const match = volumeRegex.exec(outlineContent);
         if (!match) {
           return c.json({ error: `Volume ${volumeId} chapter range not found` }, 404);
@@ -2025,6 +2177,652 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // Get chapter plan audit failures for a volume
+  app.get("/api/books/:id/volumes/:volumeId/chapter-plan-audit-failures", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(id);
+      
+      // Read audit failures from metadata file
+      const failuresPath = join(bookDir, "story", ".chapter-plan-audit-failures.json");
+      let failures: Record<string, unknown> = {};
+      
+      try {
+        const content = await readFile(failuresPath, "utf-8");
+        const allFailures = JSON.parse(content);
+        
+        // Get chapter range for this volume
+        const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+        let startChapter = 1;
+        let endChapter = 1;
+        
+        try {
+          const metaContent = await readFile(metaPath, "utf-8");
+          const meta = JSON.parse(metaContent);
+          const volumeMeta = meta.volumePlans?.find((vp: any) => vp.volumeId === volumeId);
+          if (volumeMeta?.chapterRange) {
+            startChapter = volumeMeta.chapterRange.start;
+            endChapter = volumeMeta.chapterRange.end;
+          }
+        } catch {
+          // Fallback: try to parse from outline
+          const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+          try {
+            const detailContent = await readFile(detailPath, "utf-8");
+            const rangeMatch = detailContent.match(/章节范围[：:]\s*(?:第)?(\d+)[\s-]*(?:章)?[\s-]*(?:第)?(\d+)(?:章)?/i);
+            if (rangeMatch) {
+              startChapter = parseInt(rangeMatch[1], 10);
+              endChapter = parseInt(rangeMatch[2], 10);
+            }
+          } catch {
+            // Ignore
+          }
+        }
+        
+        // Filter failures for this volume's chapters
+        for (let chapterNum = startChapter; chapterNum <= endChapter; chapterNum++) {
+          const key = String(chapterNum);
+          if (allFailures[key]) {
+            failures[key] = allFailures[key];
+          }
+        }
+      } catch {
+        // File doesn't exist, return empty failures
+      }
+      
+      return c.json({ ok: true, volumeId, failures });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Generate missing chapter plans for failed audits
+  app.post("/api/books/:id/volumes/:volumeId/generate-missing-plans", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    // Combined sink that broadcasts to SSE and writes to file
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
+    broadcast("volume:generate-missing-plans:start", { bookId: id, volumeId });
+    combinedSink.write({ 
+      level: "info", 
+      tag: "planner", 
+      message: `开始生成第${volumeId}卷缺失的章节规划...`,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(id);
+      
+      // Read audit failures
+      const failuresPath = join(bookDir, "story", ".chapter-plan-audit-failures.json");
+      let failedChapters: number[] = [];
+      
+      try {
+        const content = await readFile(failuresPath, "utf-8");
+        const allFailures = JSON.parse(content);
+        
+        // Get chapter range for this volume
+        const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+        let startChapter = 1;
+        let endChapter = 1;
+        
+        try {
+          const metaContent = await readFile(metaPath, "utf-8");
+          const meta = JSON.parse(metaContent);
+          const volumeMeta = meta.volumePlans?.find((vp: any) => vp.volumeId === volumeId);
+          if (volumeMeta?.chapterRange) {
+            startChapter = volumeMeta.chapterRange.start;
+            endChapter = volumeMeta.chapterRange.end;
+          }
+        } catch {
+          // Fallback: try to parse from outline
+          const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+          try {
+            const detailContent = await readFile(detailPath, "utf-8");
+            const rangeMatch = detailContent.match(/章节范围[：:]\s*(?:第)?(\d+)[\s-]*(?:章)?[\s-]*(?:第)?(\d+)(?:章)?/i);
+            if (rangeMatch) {
+              startChapter = parseInt(rangeMatch[1], 10);
+              endChapter = parseInt(rangeMatch[2], 10);
+            }
+          } catch {
+            // Ignore
+          }
+        }
+        
+        // Find failed chapters in this volume
+        for (let chapterNum = startChapter; chapterNum <= endChapter; chapterNum++) {
+          if (allFailures[String(chapterNum)]) {
+            failedChapters.push(chapterNum);
+          }
+        }
+      } catch {
+        // No failures file, nothing to do
+      }
+      
+      if (failedChapters.length === 0) {
+        combinedSink.write({ 
+          level: "info", 
+          tag: "planner", 
+          message: `第${volumeId}卷没有审计失败的章节规划`,
+          timestamp: new Date().toISOString(),
+        });
+        return c.json({ ok: true, message: "No failed chapter plans to regenerate", regenerated: [] });
+      }
+      
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `发现${failedChapters.length}个审计失败的章节规划：${failedChapters.join(", ")}`,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Clear the failures for these chapters before regenerating
+      try {
+        const content = await readFile(failuresPath, "utf-8");
+        const allFailures = JSON.parse(content);
+        for (const chapterNum of failedChapters) {
+          delete allFailures[String(chapterNum)];
+        }
+        await writeFile(failuresPath, JSON.stringify(allFailures, null, 2), "utf-8");
+      } catch {
+        // Ignore errors
+      }
+
+      // Regenerate failed chapter plans
+      await pipeline.generateChapterPlansForVolume(id, volumeId);
+
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `第${volumeId}卷缺失章节规划生成完成`,
+        timestamp: new Date().toISOString(),
+      });
+      
+      broadcast("volume:generate-missing-plans:complete", { 
+        bookId: id, 
+        volumeId,
+        regenerated: failedChapters
+      });
+      
+      logStream.end();
+      
+      return c.json({ ok: true, message: "Missing chapter plans regenerated", regenerated: failedChapters });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      combinedSink.write({ 
+        level: "error", 
+        tag: "planner", 
+        message: `第${volumeId}卷缺失章节规划生成失败：${error}`,
+        timestamp: new Date().toISOString(),
+      });
+      broadcast("volume:generate-missing-plans:error", { bookId: id, volumeId, error });
+      logStream.end();
+      return c.json({ error }, 500);
+    }
+  });
+
+  // Get single chapter plan
+  app.get("/api/books/:id/chapters/:chapterNumber/plan", async (c) => {
+    const id = c.req.param("id");
+    const chapterNumber = parseInt(c.req.param("chapterNumber"), 10);
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(id);
+      
+      // Try to read chapter plan file from runtime directory (where PlannerAgent saves it)
+      const runtimePlanPath = join(bookDir, "story", "runtime", `chapter-${String(chapterNumber).padStart(4, "0")}.intent.md`);
+      
+      try {
+        const content = await readFile(runtimePlanPath, "utf-8");
+        return c.json({ 
+          ok: true, 
+          chapterNumber, 
+          exists: true,
+          content 
+        });
+      } catch {
+        // Fallback: try the old path for backward compatibility
+        const legacyPlanPath = join(bookDir, "story", `chapter_${chapterNumber}_plan.md`);
+        try {
+          const content = await readFile(legacyPlanPath, "utf-8");
+          return c.json({ 
+            ok: true, 
+            chapterNumber, 
+            exists: true,
+            content 
+          });
+        } catch {
+          return c.json({ 
+            ok: true, 
+            chapterNumber, 
+            exists: false,
+            content: null 
+          });
+        }
+      }
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // Generate single chapter plan
+  app.post("/api/books/:id/chapters/:chapterNumber/generate-plan", async (c) => {
+    const id = c.req.param("id");
+    const chapterNumber = parseInt(c.req.param("chapterNumber"), 10);
+
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
+    broadcast("chapter:generate-plan:start", { bookId: id, chapterNumber });
+    combinedSink.write({ 
+      level: "info", 
+      tag: "planner", 
+      message: `开始生成第${chapterNumber}章章节规划...`,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      
+      // Find which volume this chapter belongs to
+      const bookDir = pipeline["state"].bookDir(id);
+      const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+      let volumeId: number | null = null;
+      
+      try {
+        const metaContent = await readFile(metaPath, "utf-8");
+        const meta = JSON.parse(metaContent);
+        for (const vp of meta.volumePlans || []) {
+          if (chapterNumber >= vp.chapterRange.start && chapterNumber <= vp.chapterRange.end) {
+            volumeId = vp.volumeId;
+            break;
+          }
+        }
+      } catch {
+        // Fallback: try to determine from outline files
+        const outlinePath = join(bookDir, "story", "volume_outline.md");
+        try {
+          const outlineContent = await readFile(outlinePath, "utf-8");
+          const volumeMatches = outlineContent.matchAll(/第\s*(\d+)\s*卷[\s\S]*?章节范围[：:]\s*(?:第)?(\d+)[\s-]*(?:章)?[\s-]*(?:第)?(\d+)(?:章)?/gi);
+          for (const match of volumeMatches) {
+            const volId = parseInt(match[1], 10);
+            const startCh = parseInt(match[2], 10);
+            const endCh = parseInt(match[3], 10);
+            if (chapterNumber >= startCh && chapterNumber <= endCh) {
+              volumeId = volId;
+              break;
+            }
+          }
+        } catch {
+          // Ignore
+        }
+      }
+      
+      if (!volumeId) {
+        throw new Error(`无法确定第${chapterNumber}章所属的分卷`);
+      }
+
+      // Generate chapter plan for this specific chapter
+      await pipeline.generateSingleChapterPlan(id, volumeId, chapterNumber);
+
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `第${chapterNumber}章章节规划生成完成`,
+        timestamp: new Date().toISOString(),
+      });
+      
+      broadcast("chapter:generate-plan:complete", { bookId: id, chapterNumber });
+      
+      logStream.end();
+      
+      return c.json({ ok: true, message: "Chapter plan generated", chapterNumber });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      combinedSink.write({ 
+        level: "error", 
+        tag: "planner", 
+        message: `第${chapterNumber}章章节规划生成失败：${error}`,
+        timestamp: new Date().toISOString(),
+      });
+      broadcast("chapter:generate-plan:error", { bookId: id, chapterNumber, error });
+      logStream.end();
+      return c.json({ error }, 500);
+    }
+  });
+
+  // Rewrite single chapter plan
+  app.post("/api/books/:id/chapters/:chapterNumber/rewrite-plan", async (c) => {
+    const id = c.req.param("id");
+    const chapterNumber = parseInt(c.req.param("chapterNumber"), 10);
+
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
+    broadcast("chapter:rewrite-plan:start", { bookId: id, chapterNumber });
+    combinedSink.write({ 
+      level: "info", 
+      tag: "planner", 
+      message: `开始重写第${chapterNumber}章章节规划...`,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      
+      // Find which volume this chapter belongs to
+      const bookDir = pipeline["state"].bookDir(id);
+      const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+      let volumeId: number | null = null;
+      
+      try {
+        const metaContent = await readFile(metaPath, "utf-8");
+        const meta = JSON.parse(metaContent);
+        for (const vp of meta.volumePlans || []) {
+          if (chapterNumber >= vp.chapterRange.start && chapterNumber <= vp.chapterRange.end) {
+            volumeId = vp.volumeId;
+            break;
+          }
+        }
+      } catch {
+        // Fallback
+      }
+      
+      if (!volumeId) {
+        throw new Error(`无法确定第${chapterNumber}章所属的分卷`);
+      }
+
+      // Delete existing plan file to force regeneration
+      const planPath = join(bookDir, "story", `chapter_${chapterNumber}_plan.md`);
+      try {
+        await unlink(planPath);
+      } catch {
+        // File may not exist, ignore
+      }
+
+      // Regenerate chapter plan
+      await pipeline.generateSingleChapterPlan(id, volumeId, chapterNumber);
+
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `第${chapterNumber}章章节规划重写完成`,
+        timestamp: new Date().toISOString(),
+      });
+      
+      broadcast("chapter:rewrite-plan:complete", { bookId: id, chapterNumber });
+      
+      logStream.end();
+      
+      return c.json({ ok: true, message: "Chapter plan rewritten", chapterNumber });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      combinedSink.write({ 
+        level: "error", 
+        tag: "planner", 
+        message: `第${chapterNumber}章章节规划重写失败：${error}`,
+        timestamp: new Date().toISOString(),
+      });
+      broadcast("chapter:rewrite-plan:error", { bookId: id, chapterNumber, error });
+      logStream.end();
+      return c.json({ error }, 500);
+    }
+  });
+
+  // Continue chapter plan audit
+  app.post("/api/books/:id/chapters/:chapterNumber/continue-audit", async (c) => {
+    const id = c.req.param("id");
+    const chapterNumber = parseInt(c.req.param("chapterNumber"), 10);
+
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
+    broadcast("chapter:continue-audit:start", { bookId: id, chapterNumber });
+    combinedSink.write({ 
+      level: "info", 
+      tag: "planner", 
+      message: `继续第${chapterNumber}章章节规划审计...`,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      
+      // Find which volume this chapter belongs to
+      const bookDir = pipeline["state"].bookDir(id);
+      const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+      let volumeId: number | null = null;
+      
+      try {
+        const metaContent = await readFile(metaPath, "utf-8");
+        const meta = JSON.parse(metaContent);
+        for (const vp of meta.volumePlans || []) {
+          if (chapterNumber >= vp.chapterRange.start && chapterNumber <= vp.chapterRange.end) {
+            volumeId = vp.volumeId;
+            break;
+          }
+        }
+      } catch {
+        // Fallback
+      }
+      
+      if (!volumeId) {
+        throw new Error(`无法确定第${chapterNumber}章所属的分卷`);
+      }
+
+      // Clear any existing audit failure for this chapter
+      const failuresPath = join(bookDir, "story", ".chapter-plan-audit-failures.json");
+      try {
+        const content = await readFile(failuresPath, "utf-8");
+        const failures = JSON.parse(content);
+        delete failures[String(chapterNumber)];
+        await writeFile(failuresPath, JSON.stringify(failures, null, 2), "utf-8");
+      } catch {
+        // File may not exist, ignore
+      }
+
+      // Regenerate chapter plan (will go through audit again)
+      await pipeline.generateSingleChapterPlan(id, volumeId, chapterNumber);
+
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `第${chapterNumber}章章节规划审计完成`,
+        timestamp: new Date().toISOString(),
+      });
+      
+      broadcast("chapter:continue-audit:complete", { bookId: id, chapterNumber });
+      
+      logStream.end();
+      
+      return c.json({ ok: true, message: "Chapter plan audit continued", chapterNumber });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      combinedSink.write({ 
+        level: "error", 
+        tag: "planner", 
+        message: `第${chapterNumber}章章节规划审计失败：${error}`,
+        timestamp: new Date().toISOString(),
+      });
+      broadcast("chapter:continue-audit:error", { bookId: id, chapterNumber, error });
+      logStream.end();
+      return c.json({ error }, 500);
+    }
+  });
+
+  // Batch rewrite all chapter plans for a volume
+  app.post("/api/books/:id/volumes/:volumeId/rewrite-plans", async (c) => {
+    const id = c.req.param("id");
+    const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
+    broadcast("volume:rewrite-plans:start", { bookId: id, volumeId });
+    combinedSink.write({ 
+      level: "info", 
+      tag: "planner", 
+      message: `开始批量重写第${volumeId}卷所有章节规划...`,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const bookDir = pipeline["state"].bookDir(id);
+      
+      // Get chapter range for this volume
+      const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+      let startChapter = 1;
+      let endChapter = 1;
+      
+      try {
+        const metaContent = await readFile(metaPath, "utf-8");
+        const meta = JSON.parse(metaContent);
+        const volumeMeta = meta.volumePlans?.find((vp: any) => vp.volumeId === volumeId);
+        if (volumeMeta?.chapterRange) {
+          startChapter = volumeMeta.chapterRange.start;
+          endChapter = volumeMeta.chapterRange.end;
+        }
+      } catch {
+        // Fallback: try to parse from outline
+        const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+        try {
+          const detailContent = await readFile(detailPath, "utf-8");
+          const rangeMatch = detailContent.match(/章节范围[：:]\s*(?:第)?(\d+)[\s-]*(?:章)?[\s-]*(?:第)?(\d+)(?:章)?/i);
+          if (rangeMatch) {
+            startChapter = parseInt(rangeMatch[1], 10);
+            endChapter = parseInt(rangeMatch[2], 10);
+          }
+        } catch {
+          // Ignore
+        }
+      }
+      
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `第${volumeId}卷章节范围：${startChapter}-${endChapter}章，开始删除现有规划...`,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Delete all existing chapter plans for this volume
+      for (let chapterNum = startChapter; chapterNum <= endChapter; chapterNum++) {
+        const planPath = join(bookDir, "story", `chapter_${chapterNum}_plan.md`);
+        try {
+          await unlink(planPath);
+          combinedSink.write({ 
+            level: "info", 
+            tag: "planner", 
+            message: `已删除第${chapterNum}章原有规划`,
+            timestamp: new Date().toISOString(),
+          });
+        } catch {
+          // File may not exist, ignore
+        }
+      }
+
+      // Clear audit failures for this volume
+      const failuresPath = join(bookDir, "story", ".chapter-plan-audit-failures.json");
+      try {
+        const content = await readFile(failuresPath, "utf-8");
+        const failures = JSON.parse(content);
+        for (let chapterNum = startChapter; chapterNum <= endChapter; chapterNum++) {
+          delete failures[String(chapterNum)];
+        }
+        await writeFile(failuresPath, JSON.stringify(failures, null, 2), "utf-8");
+      } catch {
+        // File may not exist, ignore
+      }
+
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `开始重新生成第${volumeId}卷所有章节规划...`,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Regenerate all chapter plans
+      await pipeline.generateChapterPlansForVolume(id, volumeId);
+
+      combinedSink.write({ 
+        level: "info", 
+        tag: "planner", 
+        message: `第${volumeId}卷所有章节规划重写完成`,
+        timestamp: new Date().toISOString(),
+      });
+      
+      broadcast("volume:rewrite-plans:complete", { bookId: id, volumeId });
+      
+      logStream.end();
+      
+      return c.json({ ok: true, message: "All chapter plans rewritten", volumeId });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      combinedSink.write({ 
+        level: "error", 
+        tag: "planner", 
+        message: `第${volumeId}卷章节规划批量重写失败：${error}`,
+        timestamp: new Date().toISOString(),
+      });
+      broadcast("volume:rewrite-plans:error", { bookId: id, volumeId, error });
+      logStream.end();
+      return c.json({ error }, 500);
+    }
+  });
+
   // Rewrite specific volume outline
   app.post("/api/books/:id/volumes/:volumeId/rewrite-outline", async (c) => {
     const id = c.req.param("id");
@@ -2051,11 +2849,25 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const id = c.req.param("id");
     const volumeId = parseInt(c.req.param("volumeId"), 10);
 
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    // Combined sink that broadcasts to SSE and writes to file
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
     broadcast("volume:generate-detail:start", { bookId: id, volumeId });
-    broadcast("log", { 
+    combinedSink.write({ 
       level: "info", 
       tag: "architect", 
-      message: `开始生成第${volumeId}卷详细卷纲...` 
+      message: `开始生成第${volumeId}卷详细卷纲...`,
+      timestamp: new Date().toISOString(),
     });
 
     try {
@@ -2071,22 +2883,29 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         model: cachedConfig.llm.model,
         projectRoot: root,
         bookId: id,
-        logger: createLogger({ tag: "architect", sinks: [sseSink] }),
+        logger: createLogger({ tag: "architect", sinks: [combinedSink] }),
       };
       const architect = new ArchitectAgent(ctx);
       
-      broadcast("log", { 
+      combinedSink.write({ 
         level: "info", 
         tag: "architect", 
-        message: `ArchitectAgent 正在为第${volumeId}卷生成详细卷纲（包含章节分组、角色发展等）...` 
+        message: `ArchitectAgent 正在为第${volumeId}卷生成详细卷纲（包含章节分组、角色发展等）...`,
+        timestamp: new Date().toISOString(),
       });
       
       const result = await architect.generateVolumeDetail(book, bookDir, volumeId);
       
-      // Filter out <thinking> tags from LLM response
+      // Filter out <think> and <thinking> tags from LLM response
       let filteredContent = result.volumeDetail;
+      // Remove <think>...</think> tags (used by some LLM models)
+      const thinkRegex = /<think>[\s\S]*?<\/think>/gi;
+      filteredContent = filteredContent.replace(thinkRegex, "");
+      // Remove <thinking>...</thinking> tags (used by some LLM models)
       const thinkingRegex = /<thinking>[\s\S]*?<\/thinking>/gi;
       filteredContent = filteredContent.replace(thinkingRegex, "");
+      // Clean up any empty lines left after removal
+      filteredContent = filteredContent.replace(/\n{3,}/g, "\n\n").trim();
       
       // Save the generated volume detail to a separate file
       const volumeDetailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
@@ -2103,10 +2922,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         }
       }
       
-      broadcast("log", { 
-        level: "success", 
+      combinedSink.write({ 
+        level: "info", 
         tag: "architect", 
-        message: `第${volumeId}卷详细卷纲生成完成，已保存到 volume_${volumeId}_detail.md` 
+        message: `第${volumeId}卷详细卷纲生成完成，已保存到 volume_${volumeId}_detail.md`,
+        timestamp: new Date().toISOString(),
       });
       
       broadcast("volume:generate-detail:complete", { 
@@ -2115,6 +2935,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         volumeDetail: result.volumeDetail 
       });
       
+      // Close log stream
+      logStream.end();
+      
       return c.json({ 
         ok: true, 
         volumeId,
@@ -2122,12 +2945,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      broadcast("log", { 
+      combinedSink.write({ 
         level: "error", 
         tag: "architect", 
-        message: `第${volumeId}卷详细卷纲生成失败：${error}` 
+        message: `第${volumeId}卷详细卷纲生成失败：${error}`,
+        timestamp: new Date().toISOString(),
       });
       broadcast("volume:generate-detail:error", { bookId: id, volumeId, error });
+      
+      // Close log stream
+      logStream.end();
+      
       return c.json({ error }, 500);
     }
   });
@@ -2137,11 +2965,25 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const id = c.req.param("id");
     const volumeId = parseInt(c.req.param("volumeId"), 10);
 
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    // Combined sink that broadcasts to SSE and writes to file
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
     broadcast("volume:generate-plans:start", { bookId: id, volumeId });
-    broadcast("log", { 
+    combinedSink.write({ 
       level: "info", 
       tag: "planner", 
-      message: `开始生成第${volumeId}卷章节规划...` 
+      message: `开始生成第${volumeId}卷章节规划...`,
+      timestamp: new Date().toISOString(),
     });
 
     try {
@@ -2158,31 +3000,42 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       if (match) {
         const startChapter = parseInt(match[1], 10);
         const endChapter = parseInt(match[2], 10);
-        broadcast("log", { 
+        combinedSink.write({ 
           level: "info", 
           tag: "planner", 
-          message: `第${volumeId}卷章节范围：第${startChapter}-${endChapter}章，共${endChapter - startChapter + 1}章` 
+          message: `第${volumeId}卷章节范围：第${startChapter}-${endChapter}章，共${endChapter - startChapter + 1}章`,
+          timestamp: new Date().toISOString(),
         });
       }
       
       await pipeline.generateChapterPlansForVolume(id, volumeId);
       
-      broadcast("log", { 
-        level: "success", 
+      combinedSink.write({ 
+        level: "info", 
         tag: "planner", 
-        message: `第${volumeId}卷章节规划全部生成完成` 
+        message: `第${volumeId}卷章节规划全部生成完成`,
+        timestamp: new Date().toISOString(),
       });
       
       broadcast("volume:generate-plans:complete", { bookId: id, volumeId });
+      
+      // Close log stream
+      logStream.end();
+      
       return c.json({ ok: true });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      broadcast("log", { 
+      combinedSink.write({ 
         level: "error", 
         tag: "planner", 
-        message: `第${volumeId}卷章节规划生成失败：${error}` 
+        message: `第${volumeId}卷章节规划生成失败：${error}`,
+        timestamp: new Date().toISOString(),
       });
       broadcast("volume:generate-plans:error", { bookId: id, volumeId, error });
+      
+      // Close log stream
+      logStream.end();
+      
       return c.json({ error }, 500);
     }
   });
@@ -2192,33 +3045,57 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const id = c.req.param("id");
     const volumeId = parseInt(c.req.param("volumeId"), 10);
 
+    // Create file log stream for this operation
+    const logPath = join(root, "inkos.log");
+    const logStream = createWriteStream(logPath, { flags: "a" });
+    const fileSink = createJsonLineSink(logStream);
+    
+    // Combined sink that broadcasts to SSE and writes to file
+    const combinedSink: LogSink = {
+      write(entry: LogEntry): void {
+        sseSink.write(entry);
+        fileSink.write(entry);
+      },
+    };
+
     broadcast("volume:rewrite-chapters:start", { bookId: id, volumeId });
-    broadcast("log", { 
+    combinedSink.write({ 
       level: "info", 
       tag: "writer", 
-      message: `开始重写第${volumeId}卷所有章节...` 
+      message: `开始重写第${volumeId}卷所有章节...`,
+      timestamp: new Date().toISOString(),
     });
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       await pipeline.regenerateVolumeChapters(id, volumeId);
       
-      broadcast("log", { 
-        level: "success", 
+      combinedSink.write({ 
+        level: "info", 
         tag: "writer", 
-        message: `第${volumeId}卷所有章节重写完成` 
+        message: `第${volumeId}卷所有章节重写完成`,
+        timestamp: new Date().toISOString(),
       });
       
       broadcast("volume:rewrite-chapters:complete", { bookId: id, volumeId });
+      
+      // Close log stream
+      logStream.end();
+      
       return c.json({ ok: true });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      broadcast("log", { 
+      combinedSink.write({ 
         level: "error", 
         tag: "writer", 
-        message: `第${volumeId}卷章节重写失败：${error}` 
+        message: `第${volumeId}卷章节重写失败：${error}`,
+        timestamp: new Date().toISOString(),
       });
       broadcast("volume:rewrite-chapters:error", { bookId: id, volumeId, error });
+      
+      // Close log stream
+      logStream.end();
+      
       return c.json({ error }, 500);
     }
   });
@@ -2236,7 +3113,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       try {
         const outlineContent = await readFile(outlinePath, "utf-8");
         // Simple parsing to extract volume information
-        const volumeRegex = new RegExp(`### 第${volumeId}卷[\s\S]*?章节范围：(\d+)-(\d+)`, "g");
+        const volumeRegex = new RegExp(`### 第${volumeId}卷[\\s\\S]*?章节范围[：:](\\d+)-(\\d+)`, "i");
         const match = volumeRegex.exec(outlineContent);
         
         if (match) {

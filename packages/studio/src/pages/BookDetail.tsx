@@ -32,7 +32,8 @@ import {
   AlertTriangle,
   Send,
   BookOpen,
-  List
+  List,
+  Play
 } from "lucide-react";
 
 interface ChapterMeta {
@@ -145,7 +146,7 @@ export function BookDetail({
   const [loadingAuditConfig, setLoadingAuditConfig] = useState(false);
   const [savingAuditConfig, setSavingAuditConfig] = useState(false);
   const [showAuditConfig, setShowAuditConfig] = useState(false);
-  const [activeAuditTab, setActiveAuditTab] = useState<"dimensions" | "validation" | "chapter" | "foundation" | "help">("dimensions");
+  const [activeAuditTab, setActiveAuditTab] = useState<"dimensions" | "validation" | "chapter" | "chapterPlan" | "foundation" | "help">("dimensions");
   const [showOutlineRegenerate, setShowOutlineRegenerate] = useState(false);
   const [outlineGenre, setOutlineGenre] = useState("");
   const [outlineBrief, setOutlineBrief] = useState("");
@@ -172,14 +173,7 @@ export function BookDetail({
   const [volumeDetailOutlines, setVolumeDetailOutlines] = useState<Record<number, { exists: boolean; content: string | null }>>({});
   const [loadingVolumeDetail, setLoadingVolumeDetail] = useState<Record<number, boolean>>({});
   
-  // Chapter plans status states
-  const [chapterPlansStatus, setChapterPlansStatus] = useState<Record<number, { allGenerated: boolean; hasSomeGenerated: boolean; generatedCount: number; totalChapters: number }>>({});
-  const [loadingChapterPlansStatus, setLoadingChapterPlansStatus] = useState<Record<number, boolean>>({});
-  
-  // Chapter plans modal states
-  const [showChapterPlansModal, setShowChapterPlansModal] = useState(false);
-  const [selectedVolumeChapterPlans, setSelectedVolumeChapterPlans] = useState<any>(null);
-  const [loadingChapterPlans, setLoadingChapterPlans] = useState(false);
+
   
   // Custom confirm/alert dialog states
   const [showConfirm, setShowConfirm] = useState(false);
@@ -199,10 +193,9 @@ export function BookDetail({
     try {
       const response = await fetchJson(`/books/${bookId}/volume-plans`);
       setVolumePlans(response.volumePlans);
-      // Check detail outline and chapter plans status for each volume
+      // Check detail outline for each volume
       for (const volume of response.volumePlans) {
         await checkVolumeDetailOutline(volume.volumeId);
-        await checkChapterPlansStatus(volume.volumeId);
       }
     } catch (e) {
       console.error('Failed to load volume plans:', e);
@@ -269,20 +262,6 @@ export function BookDetail({
     });
   };
 
-  const viewChapterPlans = async (volumeId: number) => {
-    setLoadingChapterPlans(true);
-    setShowChapterPlansModal(true);
-    try {
-      const response = await fetchJson(`/books/${bookId}/volumes/${volumeId}/chapter-plans`);
-      setSelectedVolumeChapterPlans(response);
-    } catch (e) {
-      console.error('Failed to load chapter plans:', e);
-      setSelectedVolumeChapterPlans(null);
-    } finally {
-      setLoadingChapterPlans(false);
-    }
-  };
-
   const checkVolumeDetailOutline = async (volumeId: number) => {
     setLoadingVolumeDetail(prev => ({ ...prev, [volumeId]: true }));
     try {
@@ -302,17 +281,15 @@ export function BookDetail({
 
   const generateVolumeDetailOutline = async (volumeId: number) => {
     // No confirmation needed for single volume, only for batch
+    setLoadingVolumeDetail(prev => ({ ...prev, [volumeId]: true }));
     try {
       await postApi(`/books/${bookId}/volumes/${volumeId}/generate-detail`);
       // Refresh status after generation
       await checkVolumeDetailOutline(volumeId);
-      // Reset chapter plans status since volume outline changed
-      setChapterPlansStatus(prev => ({
-        ...prev,
-        [volumeId]: { allGenerated: false, hasSomeGenerated: false, generatedCount: 0, totalChapters: 0 }
-      }));
     } catch (e) {
       showAlertDialog(e instanceof Error ? e.message : '分卷卷纲生成失败');
+    } finally {
+      setLoadingVolumeDetail(prev => ({ ...prev, [volumeId]: false }));
     }
   };
 
@@ -333,66 +310,6 @@ export function BookDetail({
         showAlertDialog(e instanceof Error ? e.message : '分卷卷纲生成失败');
       }
     });
-  };
-
-  const checkChapterPlansStatus = async (volumeId: number) => {
-    setLoadingChapterPlansStatus(prev => ({ ...prev, [volumeId]: true }));
-    try {
-      const response = await fetchJson(`/books/${bookId}/volumes/${volumeId}/chapter-plans-status`);
-      setChapterPlansStatus(prev => ({
-        ...prev,
-        [volumeId]: {
-          allGenerated: response.allGenerated,
-          hasSomeGenerated: response.hasSomeGenerated,
-          generatedCount: response.generatedCount,
-          totalChapters: response.totalChapters
-        }
-      }));
-      return response.allGenerated;
-    } catch (e) {
-      console.error('Failed to check chapter plans status:', e);
-      return false;
-    } finally {
-      setLoadingChapterPlansStatus(prev => ({ ...prev, [volumeId]: false }));
-    }
-  };
-
-  const generateChapterPlansForVolume = async (volumeId: number) => {
-    showConfirmDialog('确认生成章节规划', `确定要生成第${volumeId}卷的章节规划吗？`, async () => {
-      try {
-        await postApi(`/books/${bookId}/volumes/${volumeId}/generate-plans`);
-        showAlertDialog('章节规划生成已开始，请等待完成');
-        // Refresh status
-        await checkChapterPlansStatus(volumeId);
-      } catch (e) {
-        showAlertDialog(e instanceof Error ? e.message : '章节规划生成失败');
-      }
-    });
-  };
-
-  const generateAllChapterPlans = async () => {
-    if (!volumePlans || volumePlans.length === 0) return;
-    
-    showConfirmDialog('确认生成所有章节规划', `确定要生成所有${volumePlans.length}个分卷的章节规划吗？`, async () => {
-      try {
-        for (const volume of volumePlans) {
-          await generateChapterPlansForVolume(volume.volumeId);
-        }
-        showAlertDialog('所有章节规划生成已开始，请等待完成');
-      } catch (e) {
-        showAlertDialog(e instanceof Error ? e.message : '章节规划生成失败');
-      }
-    });
-  };
-
-  const generateChapterPlans = async (volumeId: string) => {
-    try {
-      await postApi(`/books/${bookId}/volumes/${volumeId}/generate-plans`);
-      showAlertDialog('章节规划生成成功');
-      loadVolumePlans();
-    } catch (e) {
-      showAlertDialog(e instanceof Error ? e.message : '章节规划生成失败');
-    }
   };
 
   const rewriteVolumeChapters = async (volumeId: string) => {
@@ -433,7 +350,31 @@ export function BookDetail({
     }
   }, [sse.messages, bookId, refetch]);
 
-  // 自动加载卷纲和章节规划
+  // 监听 SSE 事件，处理异步错误和完成事件
+  useEffect(() => {
+    const recentMessages = sse.messages.slice(-10);
+    for (const message of recentMessages) {
+      const data = message.data as { bookId?: string; volumeId?: number; error?: string } | null;
+      
+      // 处理分卷卷纲生成事件
+      if (data?.bookId === bookId && data?.volumeId) {
+        switch (message.event) {
+          case "volume:generate-detail:complete":
+            // 生成完成，刷新状态
+            checkVolumeDetailOutline(data.volumeId);
+            setLoadingVolumeDetail(prev => ({ ...prev, [data.volumeId!]: false }));
+            break;
+          case "volume:generate-detail:error":
+            // 生成出错，重置状态并显示错误
+            setLoadingVolumeDetail(prev => ({ ...prev, [data.volumeId!]: false }));
+            showAlertDialog(data.error || '分卷卷纲生成失败');
+            break;
+        }
+      }
+    }
+  }, [sse.messages, bookId]);
+
+  // 自动加载卷纲
   useEffect(() => {
     loadVolumePlans();
   }, [bookId]);
@@ -466,7 +407,7 @@ export function BookDetail({
   const handleWriteNext = async () => {
     setWriteRequestPending(true);
     try {
-      await postApi(`/books/${bookId}/write`, {});
+      await postApi(`/books/${bookId}/write-next`, {});
     } catch (e) {
       showAlertDialog(e instanceof Error ? e.message : "Failed to start writing");
     } finally {
@@ -536,6 +477,41 @@ export function BookDetail({
       showAlertDialog(e instanceof Error ? e.message : "Failed to save settings");
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleSync = async (chapterNum: number) => {
+    setSyncingChapters((prev) => [...prev, chapterNum]);
+    try {
+      await postApi(`/books/${bookId}/chapters/${chapterNum}/sync`, {});
+      refetch();
+    } catch (e) {
+      showAlertDialog(e instanceof Error ? e.message : "Failed to sync");
+    } finally {
+      setSyncingChapters((prev) => prev.filter((n) => n !== chapterNum));
+    }
+  };
+
+  const handleRevise = async (chapterNum: number, mode: ReviseMode) => {
+    const brief = window.prompt(
+      data?.book.language === "en"
+        ? "Optional revise brief for this run only. Leave blank to use existing focus."
+        : "可选：输入这次修订要遵循的补充想法。留空则沿用现有 focus。",
+      "",
+    );
+    if (brief === null) return;
+    setRevisingChapters((prev) => [...prev, chapterNum]);
+    try {
+      await fetchJson(`/books/${bookId}/chapters/${chapterNum}/revise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, brief: brief.trim() || undefined }),
+      });
+      refetch();
+    } catch (e) {
+      showAlertDialog(e instanceof Error ? e.message : "Failed to revise");
+    } finally {
+      setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
     }
   };
 
@@ -842,7 +818,7 @@ export function BookDetail({
             }}
             className={`flex-1 py-4 px-6 text-sm font-bold uppercase tracking-widest transition-colors ${activeTab === 'volume-plans' ? 'bg-primary/10 text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}
           >
-            卷纲和章节规划
+            卷纲
           </button>
         </div>
 
@@ -861,7 +837,7 @@ export function BookDetail({
               </thead>
               <tbody>
                 {chapters.map((ch) => (
-                  <tr key={ch.number} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                  <tr key={ch.number} className="border-b border-border/20 hover:bg-secondary/20 transition-colors group">
                     <td className="px-6 py-4 text-sm font-medium">{ch.number}</td>
                     <td className="px-6 py-4">
                       <button
@@ -877,124 +853,75 @@ export function BookDetail({
                         {STATUS_CONFIG[ch.status]?.icon}
                         {translateChapterStatus(ch.status, t)}
                       </div>
-                      {ch.status === "ready-for-review" && (
-                        <div className="flex items-center gap-1 mt-1">
-                          <button
-                            onClick={async () => {
-                              try {
-                                await postApi(`/books/${bookId}/chapters/${ch.number}/approve`, {});
-                                refetch();
-                              } catch (e) {
-                                showAlertDialog(e instanceof Error ? e.message : "Failed to approve");
-                              }
-                            }}
-                            className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/10 text-emerald-600 rounded hover:bg-emerald-500/20 transition-colors"
-                          >
-                            {t("book.approve")}
-                          </button>
-                          <button
-                            onClick={async () => {
-                              try {
-                                await postApi(`/books/${bookId}/chapters/${ch.number}/reject`, {});
-                                refetch();
-                              } catch (e) {
-                                showAlertDialog(e instanceof Error ? e.message : "Failed to reject");
-                              }
-                            }}
-                            className="px-2 py-0.5 text-[10px] font-bold bg-destructive/10 text-destructive rounded hover:bg-destructive/20 transition-colors"
-                          >
-                            {t("book.reject")}
-                          </button>
-                        </div>
-                      )}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="relative" ref={dropdownRef}>
-                        <button
-                          onClick={() => setOpenDropdown(openDropdown === ch.number ? null : ch.number)}
-                          className="p-1.5 rounded-lg hover:bg-secondary/50 transition-colors"
-                        >
-                          <ChevronDown size={16} />
-                        </button>
-                        {openDropdown === ch.number && (
-                          <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border/50 rounded-lg shadow-lg z-10 py-1">
+                      <div className="flex gap-1.5 justify-end">
+                        {ch.status === "ready-for-review" && (
+                          <>
                             <button
-                              onClick={async () => {
-                                setOpenDropdown(null);
-                                try {
-                                  await postApi(`/books/${bookId}/chapters/${ch.number}/audit`, {});
-                                  refetch();
-                                } catch (e) {
-                                  showAlertDialog(e instanceof Error ? e.message : "Failed to audit");
-                                }
-                              }}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2"
+                              onClick={async () => { await postApi(`/books/${bookId}/chapters/${ch.number}/approve`); refetch(); }}
+                              className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all shadow-sm"
+                              title={t("book.approve")}
                             >
-                              <Search size={14} />
-                              {t("book.audit")}
+                              <Check size={14} />
                             </button>
                             <button
-                              onClick={async () => {
-                                setOpenDropdown(null);
-                                setRewritingChapters((prev) => [...prev, ch.number]);
-                                try {
-                                  await postApi(`/books/${bookId}/chapters/${ch.number}/rewrite`, {});
-                                  refetch();
-                                } catch (e) {
-                                  showAlertDialog(e instanceof Error ? e.message : "Failed to rewrite");
-                                } finally {
-                                  setRewritingChapters((prev) => prev.filter((n) => n !== ch.number));
-                                }
-                              }}
-                              disabled={rewritingChapters.includes(ch.number)}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
+                              onClick={async () => { await postApi(`/books/${bookId}/chapters/${ch.number}/reject`); refetch(); }}
+                              className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all shadow-sm"
+                              title={t("book.reject")}
                             >
-                              {rewritingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <RefreshCw size={14} />}
-                              {t("book.rewrite")}
+                              <X size={14} />
                             </button>
-                            <button
-                              onClick={async () => {
-                                setOpenDropdown(null);
-                                setSyncingChapters((prev) => [...prev, ch.number]);
-                                try {
-                                  await postApi(`/books/${bookId}/chapters/${ch.number}/sync`, {});
-                                  refetch();
-                                } catch (e) {
-                                  showAlertDialog(e instanceof Error ? e.message : "Failed to sync");
-                                } finally {
-                                  setSyncingChapters((prev) => prev.filter((n) => n !== ch.number));
-                                }
-                              }}
-                              disabled={syncingChapters.includes(ch.number)}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-secondary/50 transition-colors flex items-center gap-2 disabled:opacity-50"
-                            >
-                              {syncingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <Sparkles size={14} />}
-                              {t("book.sync")}
-                            </button>
-                            <div className="border-t border-border/50 my-1" />
-                            <button
-                              onClick={async () => {
-                                setOpenDropdown(null);
-                                showConfirmDialog(t("book.confirmDelete"), "", async () => {
-                                  setDeletingChapters((prev) => [...prev, ch.number]);
-                                  try {
-                                    await fetchJson(`/books/${bookId}/chapters/${ch.number}`, { method: "DELETE" });
-                                    refetch();
-                                  } catch (e) {
-                                    showAlertDialog(e instanceof Error ? e.message : "Failed to delete");
-                                  } finally {
-                                    setDeletingChapters((prev) => prev.filter((n) => n !== ch.number));
-                                  }
-                                });
-                              }}
-                              disabled={deletingChapters.includes(ch.number)}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-2 disabled:opacity-50"
-                            >
-                              {deletingChapters.includes(ch.number) ? <div className="w-4 h-4 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" /> : <Trash2 size={14} />}
-                              {t("book.delete")}
-                            </button>
-                          </div>
+                          </>
                         )}
+                        <button
+                          onClick={async () => {
+                            const auditResult = await fetchJson<{ passed?: boolean; issues?: unknown[] }>(`/books/${bookId}/audit/${ch.number}`, { method: "POST" });
+                            alert(auditResult.passed ? "Audit passed" : `Audit failed: ${auditResult.issues?.length ?? 0} issues`);
+                            refetch();
+                          }}
+                          className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
+                          title={t("book.audit")}
+                        >
+                          <ShieldCheck size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleRewrite(ch.number)}
+                          disabled={rewritingChapters.includes(ch.number)}
+                          className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm disabled:opacity-50"
+                          title={t("book.rewrite")}
+                        >
+                          {rewritingChapters.includes(ch.number)
+                            ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
+                            : <RotateCcw size={14} />}
+                        </button>
+                        <button
+                          onClick={() => handleSync(ch.number)}
+                          disabled={syncingChapters.includes(ch.number) || ch.number !== latestPersistedChapter}
+                          className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm disabled:opacity-50"
+                          title={data?.book.language === "en" ? "Sync truth/state from edited chapter" : "根据已编辑章节同步 truth/state"}
+                        >
+                          {syncingChapters.includes(ch.number)
+                            ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
+                            : <RefreshCw size={14} />}
+                        </button>
+                        <select
+                          disabled={revisingChapters.includes(ch.number)}
+                          value=""
+                          onChange={(e) => {
+                            const mode = e.target.value as ReviseMode;
+                            if (mode) handleRevise(ch.number, mode);
+                          }}
+                          className="px-2 py-1.5 text-[11px] font-bold rounded-lg bg-secondary text-muted-foreground border border-border/50 outline-none hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 cursor-pointer"
+                          title="Revise with AI"
+                        >
+                          <option value="" disabled>{revisingChapters.includes(ch.number) ? t("common.loading") : t("book.curate")}</option>
+                          <option value="spot-fix">{t("book.spotFix")}</option>
+                          <option value="polish">{t("book.polish")}</option>
+                          <option value="rewrite">{t("book.rewrite")}</option>
+                          <option value="rework">{t("book.rework")}</option>
+                          <option value="anti-detect">{t("book.antiDetect")}</option>
+                        </select>
                       </div>
                     </td>
                   </tr>
@@ -1033,8 +960,6 @@ export function BookDetail({
                 {volumePlans.map((volume: any) => {
                   const detailOutline = volumeDetailOutlines[volume.volumeId];
                   const isLoading = loadingVolumeDetail[volume.volumeId];
-                  const plansStatus = chapterPlansStatus[volume.volumeId];
-                  const isLoadingPlans = loadingChapterPlansStatus[volume.volumeId];
                   
                   return (
                     <div key={volume.volumeId} className="border border-border/40 rounded-xl p-6">
@@ -1046,53 +971,44 @@ export function BookDetail({
                               已生成详细卷纲
                             </div>
                           )}
-                          {plansStatus?.allGenerated && (
-                            <div className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                              章节规划已生成 ({plansStatus.generatedCount}/{plansStatus.totalChapters})
-                            </div>
-                          )}
                         </div>
-                        <div className="flex gap-2">
-                          {isLoading ? (
-                            <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-                          ) : detailOutline?.exists ? (
-                            <>
-                              <button
-                                onClick={() => viewVolumeOutline(volume.volumeId)}
-                                className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-all"
-                              >
-                                <BookOpen size={14} />
-                                查看卷纲
-                              </button>
-                              <button
-                                onClick={() => {
-                                  if (plansStatus?.allGenerated || plansStatus?.hasSomeGenerated) {
-                                    viewChapterPlans(volume.volumeId);
-                                  } else {
-                                    generateChapterPlansForVolume(volume.volumeId);
-                                  }
-                                }}
-                                className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
-                              >
-                                <List size={14} />
-                                {plansStatus?.allGenerated ? '查看章节规划' : '生成章节规划'}
-                              </button>
+                        <div className="flex flex-col items-end gap-2">
+                          <div className="flex gap-2">
+                            {isLoading ? (
+                              <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+                            ) : detailOutline?.exists ? (
+                              <>
+                                <button
+                                  onClick={() => viewVolumeOutline(volume.volumeId)}
+                                  className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-all"
+                                >
+                                  <BookOpen size={14} />
+                                  查看卷纲
+                                </button>
+                                <button
+                                  onClick={() => generateVolumeDetailOutline(volume.volumeId)}
+                                  disabled={isLoading}
+                                  className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all disabled:opacity-50"
+                                >
+                                  <RefreshCw size={14} />
+                                  重写卷纲
+                                </button>
+                              </>
+                            ) : (
                               <button
                                 onClick={() => generateVolumeDetailOutline(volume.volumeId)}
-                                className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all"
+                                disabled={isLoading}
+                                className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/80 transition-all disabled:opacity-50"
                               >
-                                <RefreshCw size={14} />
-                                重写卷纲
+                                <Sparkles size={14} />
+                                生成分卷卷纲
                               </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => generateVolumeDetailOutline(volume.volumeId)}
-                              className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/80 transition-all"
-                            >
-                              <Sparkles size={14} />
-                              生成分卷卷纲
-                            </button>
+                            )}
+                          </div>
+                          {isLoading && (
+                            <span className="text-xs text-amber-600 animate-pulse">
+                              {detailOutline?.exists ? '重写卷纲中...' : '生成卷纲中...'}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -1147,7 +1063,23 @@ export function BookDetail({
                   <X size={20} />
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto p-6 min-h-0">
+              <div 
+                className="flex-1 overflow-y-auto p-6 min-h-0 overscroll-contain"
+                onWheel={(e) => {
+                  const target = e.currentTarget;
+                  const isAtTop = target.scrollTop === 0;
+                  const isAtBottom = target.scrollHeight - target.scrollTop === target.clientHeight;
+                  
+                  // Prevent scroll propagation when at boundaries
+                  if ((isAtTop && e.deltaY < 0) || (isAtBottom && e.deltaY > 0)) {
+                    e.stopPropagation();
+                  }
+                }}
+                onTouchMove={(e) => {
+                  // Prevent touch scroll propagation
+                  e.stopPropagation();
+                }}
+              >
                 {loadingVolumeOutline ? (
                   <div className="flex items-center justify-center h-64">
                     <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
@@ -1193,98 +1125,7 @@ export function BookDetail({
           </div>
         )}
 
-        {/* Chapter Plans Modal */}
-        {showChapterPlansModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" style={{ maxHeight: '100vh' }}>
-            <div className="bg-card rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col relative z-[101]" style={{ minHeight: '400px' }}>
-              <div className="flex items-center justify-between p-6 border-b border-border/40 shrink-0">
-                <h3 className="text-xl font-bold">
-                  第{selectedVolumeChapterPlans?.volumeId}卷 章节规划
-                  {selectedVolumeChapterPlans?.chapterRange && (
-                    <span className="ml-2 text-sm text-muted-foreground">
-                      ({selectedVolumeChapterPlans.chapterRange.start}-{selectedVolumeChapterPlans.chapterRange.end}章)
-                    </span>
-                  )}
-                </h3>
-                <button
-                  onClick={() => setShowChapterPlansModal(false)}
-                  className="p-2 hover:bg-secondary rounded-lg transition-all shrink-0"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-6 min-h-0">
-                {loadingChapterPlans ? (
-                  <div className="flex items-center justify-center h-64">
-                    <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-                  </div>
-                ) : selectedVolumeChapterPlans?.chapterPlans && selectedVolumeChapterPlans.chapterPlans.length > 0 ? (
-                  <div className="space-y-4">
-                    {selectedVolumeChapterPlans.chapterPlans.map((chapterPlan: any) => (
-                      <div key={chapterPlan.chapterNumber} className="border border-border/20 rounded-lg p-4">
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="w-8 h-8 flex items-center justify-center bg-primary/10 text-primary rounded-full text-sm font-bold">
-                            {chapterPlan.chapterNumber}
-                          </div>
-                          <h4 className="font-bold text-lg">
-                            第{chapterPlan.chapterNumber}章
-                            {chapterPlan.notGenerated && (
-                              <span className="ml-2 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
-                                未生成规划
-                              </span>
-                            )}
-                          </h4>
-                        </div>
-                        {chapterPlan.content ? (
-                          <div className="prose prose-sm max-w-none dark:prose-invert ml-11">
-                            <div className="whitespace-pre-wrap text-sm text-muted-foreground">
-                              {chapterPlan.content}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="ml-11 text-sm text-muted-foreground">
-                            该章节尚未生成规划，请先生成
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground">
-                    <List size={48} className="mb-4 opacity-50" />
-                    <p>暂无章节规划</p>
-                    <button
-                      onClick={() => generateChapterPlans(String(selectedVolumeChapterPlans?.volumeId))}
-                      className="mt-4 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
-                    >
-                      生成章节规划
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-2 p-6 border-t border-border/40 relative z-[102] shrink-0">
-                <button
-                  onClick={() => setShowChapterPlansModal(false)}
-                  className="px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all shrink-0"
-                >
-                  关闭
-                </button>
-                {selectedVolumeChapterPlans?.chapterPlans && selectedVolumeChapterPlans.chapterPlans.some((p: any) => !p.notGenerated) && (
-                  <button
-                    onClick={() => {
-                      generateChapterPlans(String(selectedVolumeChapterPlans.volumeId));
-                      setShowChapterPlansModal(false);
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/80 transition-all shrink-0"
-                  >
-                    <Sparkles size={14} />
-                    生成缺失规划
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+
       </div>
 
       {/* Delete Confirmation */}
@@ -2396,3 +2237,100 @@ export function BookDetail({
     </div>
   );
 }
+
+// Default chapter plan audit dimensions
+const defaultChapterPlanDimensions = [
+  // Critical - 严重问题（4个）
+  {
+    id: "outlineDeviation",
+    name: "大纲偏离检测",
+    enabled: true,
+    weight: 5,
+    severity: "critical" as const,
+    description: "检测章节规划是否偏离大纲设定的核心情节和角色发展",
+    checkContent: "章节目标是否与大纲节点一致，角色行为是否符合设定"
+  },
+  {
+    id: "plotConsistency",
+    name: "剧情逻辑一致性",
+    enabled: true,
+    weight: 5,
+    severity: "critical" as const,
+    description: "检测章节内部情节逻辑是否自洽，无矛盾",
+    checkContent: "事件因果关系是否合理，时间线是否正确"
+  },
+  {
+    id: "characterConsistency",
+    name: "角色行为一致性",
+    enabled: true,
+    weight: 5,
+    severity: "critical" as const,
+    description: "检测角色行为是否与其性格、能力、背景设定一致",
+    checkContent: "角色决策是否符合其性格，能力使用是否合理"
+  },
+  {
+    id: "foreshadowingLogic",
+    name: "伏笔逻辑合理性",
+    enabled: true,
+    weight: 4,
+    severity: "critical" as const,
+    description: "检测伏笔设置和回收是否符合逻辑",
+    checkContent: "伏笔是否自然融入情节，回收是否合乎逻辑"
+  },
+  // Warning - 警告问题（4个）
+  {
+    id: "pacingCheck",
+    name: "节奏把控",
+    enabled: true,
+    weight: 3,
+    severity: "warning" as const,
+    description: "检测章节节奏是否合理，避免拖沓或仓促",
+    checkContent: "情节推进速度是否适中，详略分配是否合理"
+  },
+  {
+    id: "tensionMaintenance",
+    name: "悬念维护",
+    enabled: true,
+    weight: 3,
+    severity: "warning" as const,
+    description: "检测章节是否保持适当的悬念和吸引力",
+    checkContent: "是否有足够的冲突和悬念，读者是否有继续阅读的动力"
+  },
+  {
+    id: "sceneEffectiveness",
+    name: "场景有效性",
+    enabled: true,
+    weight: 2,
+    severity: "warning" as const,
+    description: "检测场景设置是否服务于情节和角色",
+    checkContent: "场景是否推动情节发展，是否有助于角色塑造"
+  },
+  {
+    id: "emotionalCoherence",
+    name: "情绪连贯性",
+    enabled: true,
+    weight: 2,
+    severity: "warning" as const,
+    description: "检测章节情绪基调是否连贯自然",
+    checkContent: "情绪转换是否自然，是否符合情节发展"
+  },
+  // Info - 提示问题（2个）
+  {
+    id: "hookQuality",
+    name: "钩子质量",
+    enabled: true,
+    weight: 1,
+    severity: "info" as const,
+    description: "检测章节开头和结尾的钩子是否有效",
+    checkContent: "开头是否吸引读者，结尾是否留下悬念"
+  },
+  {
+    id: "transitionSmoothness",
+    name: "过渡平滑度",
+    enabled: true,
+    weight: 1,
+    severity: "info" as const,
+    description: "检测章节与前后文的过渡是否自然",
+    checkContent: "与上一章的衔接是否流畅，是否为下一章做好铺垫"
+  }
+];

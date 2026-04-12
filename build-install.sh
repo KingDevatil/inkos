@@ -21,8 +21,30 @@ pnpm -v
 echo "pnpm version check completed!"
 echo
 
-# Step 3: Clean old builds
-echo "Step 3: Cleaning old build files..."
+# Step 3: Check global link status
+echo "Step 3: Checking global link status..."
+echo "--------------------------------"
+globalPackages=$(pnpm list -g 2>/dev/null)
+inkosLinked=$(echo "$globalPackages" | grep "@actalk/inkos")
+wrongInkosLinked=$(echo "$globalPackages" | grep "^inkos ")
+
+if [ -n "$wrongInkosLinked" ]; then
+    echo "Found incorrect 'inkos' global link, removing..."
+    pnpm remove -g inkos
+    echo "Incorrect link removed!"
+fi
+
+if [ -n "$inkosLinked" ]; then
+    echo "@actalk/inkos is already linked globally."
+    echo "Current link:"
+    pnpm list -g | grep "@actalk/inkos"
+else
+    echo "@actalk/inkos is not linked globally yet."
+fi
+echo
+
+# Step 4: Clean old builds
+echo "Step 4: Cleaning old build files..."
 echo "--------------------------------"
 if [ -d "packages/cli/dist" ]; then
     echo "Removing packages/cli/dist..."
@@ -39,8 +61,8 @@ fi
 echo "Old builds cleaned!"
 echo
 
-# Step 4: Install dependencies
-echo "Step 4: Installing project dependencies..."
+# Step 5: Install dependencies
+echo "Step 5: Installing project dependencies..."
 echo "--------------------------------"
 echo "This may take a few minutes..."
 echo "Press Ctrl+C to cancel..."
@@ -49,8 +71,8 @@ pnpm install
 echo "Dependencies installed!"
 echo
 
-# Step 5: Build project
-echo "Step 5: Building project..."
+# Step 6: Build project
+echo "Step 6: Building project..."
 echo "--------------------------------"
 echo "This may take a few minutes..."
 echo "Press Ctrl+C to cancel..."
@@ -59,11 +81,43 @@ pnpm build
 echo "Project built!"
 echo
 
-# Step 6: Link to global
-echo "Step 6: Linking to global npm..."
+# Step 7: Link to global
+echo "Step 7: Linking CLI to global..."
 echo "--------------------------------"
-pnpm link --global
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_PATH="$SCRIPT_DIR/packages/cli"
+
+# Check if already linked
+linkedPath=$(pnpm list -g 2>/dev/null | grep "@actalk/inkos.*link:")
+if [ -n "$linkedPath" ]; then
+    echo "Unlinking existing global link..."
+    (cd "$CLI_PATH" && pnpm unlink --global 2>/dev/null)
+fi
+
+echo "Linking @actalk/inkos to global..."
+cd "$CLI_PATH" && pnpm link --global
 echo "Global link successful!"
+cd "$SCRIPT_DIR"
+echo
+
+# Step 8: Verify global link
+echo "Step 8: Verifying global link..."
+echo "--------------------------------"
+if command -v inkos &> /dev/null; then
+    version=$(inkos --version 2>/dev/null)
+    if [ -n "$version" ]; then
+        echo "✓ inkos command is available globally!"
+        echo "  Version: $version"
+    else
+        echo "✗ inkos command found but failed to get version"
+        echo "  Please restart your terminal or run: source ~/.bashrc"
+    fi
+else
+    echo "✗ inkos command not found in PATH"
+    echo "  Please restart your terminal or run: source ~/.bashrc"
+fi
 echo
 
 echo
