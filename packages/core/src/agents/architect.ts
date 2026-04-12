@@ -5,6 +5,7 @@ import { readGenreProfile } from "./rules-reader.js";
 import { writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { renderHookSnapshot } from "../utils/memory-retrieval.js";
+import { buildCurrentStatePrompt, buildContinuationStatePrompt } from "../utils/state-dimensions.js";
 
 export interface ArchitectOutput {
   readonly storyBible: string;
@@ -176,27 +177,7 @@ enableFullCastTracking: false
 (描述本书的核心矛盾和驱动力)
 \`\`\``;
 
-    const currentStatePrompt = resolvedLanguage === "en"
-      ? `Initial state card (Chapter 0), include:
-| Field | Value |
-| --- | --- |
-| Current Chapter | 0 |
-| Current Location | (starting location) |
-| Protagonist State | (initial condition) |
-| Current Goal | (first goal) |
-| Current Constraint | (initial constraint) |
-| Current Alliances | (initial relationships) |
-| Current Conflict | (first conflict) |`
-      : `初始状态卡（第0章），包含：
-| 字段 | 值 |
-|------|-----|
-| 当前章节 | 0 |
-| 当前位置 | (起始地点) |
-| 主角状态 | (初始状态) |
-| 当前目标 | (第一个目标) |
-| 当前限制 | (初始限制) |
-| 当前敌我 | (初始关系) |
-| 当前冲突 | (第一个冲突) |`;
+    const currentStatePrompt = buildCurrentStatePrompt(gp, resolvedLanguage);
 
     const pendingHooksPrompt = resolvedLanguage === "en"
       ? `Initial hook pool (Markdown table):
@@ -484,27 +465,12 @@ enableFullCastTracking: false
 (从正文推断本书的核心矛盾和驱动力)
 \`\`\``;
 
-    const currentStatePrompt = resolvedLanguage === "en"
-      ? `Reflect the state at the end of the latest chapter:
-| Field | Value |
-| --- | --- |
-| Current Chapter | (latest chapter number) |
-| Current Location | (location at the end of the latest chapter) |
-| Protagonist State | (state at the end of the latest chapter) |
-| Current Goal | (current goal) |
-| Current Constraint | (current constraint) |
-| Current Alliances | (current alliances / opposition) |
-| Current Conflict | (current conflict) |`
-      : `反映最后一章结束时的状态卡：
-| 字段 | 值 |
-|------|-----|
-| 当前章节 | (最后一章章节号) |
-| 当前位置 | (最后一章结束时的位置) |
-| 主角状态 | (最后一章结束时的状态) |
-| 当前目标 | (当前目标) |
-| 当前限制 | (当前限制) |
-| 当前敌我 | (当前敌我关系) |
-| 当前冲突 | (当前冲突) |`;
+    // For import mode, we need to detect the latest chapter number from chaptersText
+    const latestChapterMatch = chaptersText.match(/第\s*(\d+)\s*章|Chapter\s*(\d+)/i);
+    const latestChapter = latestChapterMatch 
+      ? parseInt(latestChapterMatch[1] || latestChapterMatch[2] || "0", 10)
+      : 0;
+    const currentStatePrompt = buildContinuationStatePrompt(gp, resolvedLanguage, latestChapter);
 
     const pendingHooksPrompt = resolvedLanguage === "en"
       ? `Identify all active hooks from the source text (Markdown table):
