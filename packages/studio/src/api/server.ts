@@ -49,19 +49,44 @@ function broadcast(event: string, data: unknown): void {
 
 const TEMP_DIR_PREFIX = ".tmp-book-create-";
 const TEMP_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TEMP_DIR_MIN_AGE_MS = 5 * 60 * 1000; // 5 minutes - protect very recent directories
 
-async function cleanupTempDirectories(booksDir: string): Promise<void> {
+async function cleanupTempDirectories(
+  booksDir: string,
+  activeStatuses?: Map<string, { status: string; error?: string }>
+): Promise<void> {
   try {
     const files = await readdir(booksDir);
     const tempDirs = files.filter(f => f.startsWith(TEMP_DIR_PREFIX));
     const now = Date.now();
     let cleaned = 0;
+    let skipped = 0;
 
     for (const tempDirName of tempDirs) {
       try {
         const tempDir = join(booksDir, tempDirName);
         const stats = await stat(tempDir);
         const age = now - stats.mtime.getTime();
+
+        // Extract bookId from temp directory name
+        // Format: .tmp-book-create-{bookId}-{timestamp}-{random}
+        const bookIdMatch = tempDirName.match(/\.tmp-book-create-(.+?)-\d+-[a-z0-9]+/);
+        const bookId = bookIdMatch ? bookIdMatch[1] : null;
+
+        // Check if this book has an active creation status
+        const isActive = bookId && activeStatuses?.has(bookId);
+        if (isActive) {
+          console.log(`[Cleanup] Skipping active temp directory: ${tempDirName} (book creation in progress)`);
+          skipped++;
+          continue;
+        }
+
+        // Check if directory is too new (protect ongoing operations)
+        if (age < TEMP_DIR_MIN_AGE_MS) {
+          console.log(`[Cleanup] Skipping recent temp directory: ${tempDirName} (age: ${Math.round(age / 1000)} seconds)`);
+          skipped++;
+          continue;
+        }
 
         // Clean up directories older than 24 hours
         if (age > TEMP_DIR_MAX_AGE_MS) {
@@ -74,8 +99,8 @@ async function cleanupTempDirectories(booksDir: string): Promise<void> {
       }
     }
 
-    if (cleaned > 0) {
-      console.log(`[Cleanup] Cleaned up ${cleaned} temporary directories`);
+    if (cleaned > 0 || skipped > 0) {
+      console.log(`[Cleanup] Cleaned up ${cleaned} temporary directories, skipped ${skipped} active/recent directories`);
     }
   } catch (e) {
     console.warn("[Cleanup] Failed to cleanup temp directories:", e);
@@ -88,8 +113,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   const booksDir = join(root, "books");
 
   // Run cleanup on startup and every hour
-  cleanupTempDirectories(booksDir);
-  setInterval(() => cleanupTempDirectories(booksDir), 60 * 60 * 1000);
+  // Pass bookCreateStatus to avoid cleaning up active book creation directories
+  cleanupTempDirectories(booksDir, bookCreateStatus);
+  setInterval(() => cleanupTempDirectories(booksDir, bookCreateStatus), 60 * 60 * 1000);
   let cachedConfig = initialConfig;
 
   app.use("/*", cors());
