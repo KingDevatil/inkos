@@ -32,11 +32,26 @@ export function parseSpotFixPatches(raw: string): SpotFixPatch[] {
   return patches.filter((patch) => patch.targetText.length > 0);
 }
 
+/**
+ * 归一化引号，将弯引号转换为直引号以便匹配
+ */
+function normalizeQuotes(text: string): string {
+  // 将中文弯引号转换为直引号
+  return text
+    .replace(/[""]/g, '"')  // 左双引号
+    .replace(/[""]/g, '"')  // 右双引号
+    .replace(/['']/g, "'")   // 左单引号
+    .replace(/['']/g, "'");  // 右单引号
+}
+
 export function applySpotFixPatches(
   original: string,
   patches: ReadonlyArray<SpotFixPatch>,
 ): SpotFixPatchApplyResult {
+  console.log(`[applySpotFixPatches] Starting with ${patches.length} patches, original length: ${original.length}`);
+
   if (patches.length === 0) {
+    console.log(`[applySpotFixPatches] No patches to apply`);
     return {
       applied: false,
       revisedContent: original,
@@ -47,7 +62,10 @@ export function applySpotFixPatches(
   }
 
   const touchedChars = patches.reduce((sum, patch) => sum + patch.targetText.length, 0);
+  console.log(`[applySpotFixPatches] Total touched chars: ${touchedChars}, ratio: ${original.length > 0 ? (touchedChars / original.length).toFixed(2) : 'N/A'}`);
+
   if (original.length > 0 && touchedChars / original.length > MAX_SPOT_FIX_TOUCHED_RATIO) {
+    console.log(`[applySpotFixPatches] REJECTED: Patch set would touch too much of the chapter`);
     return {
       applied: false,
       revisedContent: original,
@@ -59,9 +77,36 @@ export function applySpotFixPatches(
 
   let current = original;
 
-  for (const patch of patches) {
-    const start = current.indexOf(patch.targetText);
+  for (let i = 0; i < patches.length; i++) {
+    const patch = patches[i];
+    console.log(`[applySpotFixPatches] Applying patch ${i + 1}/${patches.length}:`);
+    console.log(`  Target: "${patch.targetText.slice(0, 50)}${patch.targetText.length > 50 ? '...' : ''}"`);
+    console.log(`  Replacement: "${patch.replacementText.slice(0, 50)}${patch.replacementText.length > 50 ? '...' : ''}"`);
+
+    // 首先尝试精确匹配
+    let start = current.indexOf(patch.targetText);
+    
+    // 如果精确匹配失败，尝试归一化引号后的匹配
     if (start === -1) {
+      const normalizedTarget = normalizeQuotes(patch.targetText);
+      const normalizedCurrent = normalizeQuotes(current);
+      const normalizedStart = normalizedCurrent.indexOf(normalizedTarget);
+      
+      if (normalizedStart !== -1) {
+        // 找到归一化后的匹配位置，映射回原始文本
+        start = normalizedStart;
+        console.log(`[applySpotFixPatches] Found match after normalizing quotes`);
+      }
+    }
+
+    if (start === -1) {
+      console.log(`[applySpotFixPatches] REJECTED: TARGET_TEXT not found in chapter`);
+      console.log(`  Looking for: "${patch.targetText}"`);
+      // 尝试找到相似的内容用于调试
+      const contextStart = Math.max(0, current.indexOf(patch.targetText.slice(0, 20)));
+      if (contextStart >= 0) {
+        console.log(`  Similar content found at position ${contextStart}: "${current.slice(contextStart, contextStart + 100)}..."`);
+      }
       return {
         applied: false,
         revisedContent: original,
@@ -71,8 +116,13 @@ export function applySpotFixPatches(
       };
     }
 
-    const another = current.indexOf(patch.targetText, start + patch.targetText.length);
-    if (another !== -1) {
+    // 检查是否有多个匹配（使用归一化后的文本检查）
+    const normalizedTarget = normalizeQuotes(patch.targetText);
+    const normalizedCurrent = normalizeQuotes(current);
+    const normalizedStart = normalizedCurrent.indexOf(normalizedTarget);
+    const anotherNormalized = normalizedCurrent.indexOf(normalizedTarget, normalizedStart + normalizedTarget.length);
+    if (anotherNormalized !== -1) {
+      console.log(`[applySpotFixPatches] REJECTED: TARGET_TEXT matches multiple times`);
       return {
         applied: false,
         revisedContent: original,
@@ -87,8 +137,10 @@ export function applySpotFixPatches(
       patch.replacementText,
       current.slice(start + patch.targetText.length),
     ].join("");
+    console.log(`[applySpotFixPatches] Patch ${i + 1} applied successfully`);
   }
 
+  console.log(`[applySpotFixPatches] All patches applied, revised content length: ${current.length}`);
   return {
     applied: current !== original,
     revisedContent: current,
