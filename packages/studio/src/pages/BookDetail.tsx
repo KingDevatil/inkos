@@ -186,6 +186,13 @@ export function BookDetail({
   const [showAlert, setShowAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
   
+  // Custom input dialog states
+  const [showInputDialog, setShowInputDialog] = useState(false);
+  const [inputDialogTitle, setInputDialogTitle] = useState("");
+  const [inputDialogMessage, setInputDialogMessage] = useState("");
+  const [inputDialogValue, setInputDialogValue] = useState("");
+  const [inputDialogCallback, setInputDialogCallback] = useState<((value: string | null) => void) | null>(null);
+  
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -219,6 +226,15 @@ export function BookDetail({
   const showAlertDialog = (message: string) => {
     setAlertMessage(message);
     setShowAlert(true);
+  };
+
+  // Custom input dialog helper
+  const openInputDialog = (title: string, message: string, defaultValue: string, onConfirm: (value: string | null) => void) => {
+    setInputDialogTitle(title);
+    setInputDialogMessage(message);
+    setInputDialogValue(defaultValue);
+    setInputDialogCallback(() => onConfirm);
+    setShowInputDialog(true);
   };
 
   const viewVolumeOutline = async (volumeId: number) => {
@@ -506,26 +522,27 @@ export function BookDetail({
   };
 
   const handleRevise = async (chapterNum: number, mode: ReviseMode) => {
-    const brief = window.prompt(
-      data?.book.language === "en"
-        ? "Optional revise brief for this run only. Leave blank to use existing focus."
-        : "可选：输入这次修订要遵循的补充想法。留空则沿用现有 focus。",
-      "",
-    );
-    if (brief === null) return;
-    setRevisingChapters((prev) => [...prev, chapterNum]);
-    try {
-      await fetchJson(`/books/${bookId}/chapters/${chapterNum}/revise`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, brief: brief.trim() || undefined }),
-      });
-      refetch();
-    } catch (e) {
-      showAlertDialog(e instanceof Error ? e.message : "Failed to revise");
-    } finally {
-      setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
-    }
+    const title = data?.book.language === "en" ? "Revise Chapter" : "修订章节";
+    const message = data?.book.language === "en"
+      ? "Optional revise brief for this run only. Leave blank to use existing focus."
+      : "可选：输入这次修订要遵循的补充想法。留空则沿用现有 focus。";
+    
+    openInputDialog(title, message, "", async (brief) => {
+      if (brief === null) return;
+      setRevisingChapters((prev) => [...prev, chapterNum]);
+      try {
+        await fetchJson(`/books/${bookId}/chapters/${chapterNum}/revise`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode, brief: brief.trim() || undefined }),
+        });
+        refetch();
+      } catch (e) {
+        showAlertDialog(e instanceof Error ? e.message : "Failed to revise");
+      } finally {
+        setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
+      }
+    });
   };
 
   const loadAuditConfig = async () => {
@@ -2239,6 +2256,66 @@ export function BookDetail({
                   if (confirmCallback) {
                     confirmCallback();
                   }
+                }}
+                className="px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/80 transition-all shrink-0"
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Input Dialog */}
+      {showInputDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <div className="bg-card rounded-xl max-w-md w-full overflow-hidden flex flex-col relative" style={{ zIndex: 10000 }}>
+            <div className="flex items-center justify-between p-6 border-b border-border/40 shrink-0">
+              <h3 className="text-xl font-bold">{inputDialogTitle}</h3>
+              <button
+                onClick={() => {
+                  setShowInputDialog(false);
+                  if (inputDialogCallback) {
+                    inputDialogCallback(null);
+                  }
+                  setInputDialogCallback(null);
+                }}
+                className="p-2 hover:bg-secondary rounded-lg transition-all shrink-0"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-muted-foreground">{inputDialogMessage}</p>
+              <textarea
+                value={inputDialogValue}
+                onChange={(e) => setInputDialogValue(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                rows={4}
+                placeholder=""
+                autoFocus
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 p-6 border-t border-border/40 shrink-0">
+              <button
+                onClick={() => {
+                  setShowInputDialog(false);
+                  if (inputDialogCallback) {
+                    inputDialogCallback(null);
+                  }
+                  setInputDialogCallback(null);
+                }}
+                className="px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all shrink-0"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  setShowInputDialog(false);
+                  if (inputDialogCallback) {
+                    inputDialogCallback(inputDialogValue);
+                  }
+                  setInputDialogCallback(null);
                 }}
                 className="px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/80 transition-all shrink-0"
               >
