@@ -444,6 +444,19 @@ async function chatCompletionOpenAIChat(
     ...(webSearch ? { web_search_options: { search_context_size: "medium" as const } } : {}),
     ...stripReservedKeys(options.extra),
   };
+
+  // 打印传入的 prompt
+  console.log("\n" + "=".repeat(80));
+  console.log("[LLM Request] Model:", model);
+  console.log("[LLM Request] Temperature:", options.temperature, "MaxTokens:", options.maxTokens);
+  console.log("-".repeat(80));
+  messages.forEach((msg, idx) => {
+    console.log(`[${idx + 1}/${messages.length}] ${msg.role.toUpperCase()}:`);
+    console.log(msg.content);
+    console.log("-".repeat(40));
+  });
+  console.log("=".repeat(80) + "\n");
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const stream = await client.chat.completions.create(createParams) as any;
 
@@ -478,6 +491,13 @@ async function chatCompletionOpenAIChat(
   const content = chunks.join("");
   if (!content) throw new Error("LLM returned empty response from stream");
 
+  // 打印 LLM 响应（思考内容）
+  console.log("\n" + "=".repeat(80));
+  console.log("[LLM Response] Tokens - Input:", inputTokens, "Output:", outputTokens);
+  console.log("-".repeat(80));
+  console.log(content);
+  console.log("=".repeat(80) + "\n");
+
   return {
     content,
     usage: {
@@ -504,10 +524,30 @@ async function chatCompletionOpenAIChatSync(
     stream: false,
     ...stripReservedKeys(options.extra),
   };
+
+  // 打印传入的 prompt
+  console.log("\n" + "=".repeat(80));
+  console.log("[LLM Request - Sync] Model:", model);
+  console.log("[LLM Request - Sync] Temperature:", options.temperature, "MaxTokens:", options.maxTokens);
+  console.log("-".repeat(80));
+  messages.forEach((msg, idx) => {
+    console.log(`[${idx + 1}/${messages.length}] ${msg.role.toUpperCase()}:`);
+    console.log(msg.content);
+    console.log("-".repeat(40));
+  });
+  console.log("=".repeat(80) + "\n");
+
   const response = await client.chat.completions.create(syncParams);
 
   const content = response.choices[0]?.message?.content ?? "";
   if (!content) throw new Error("LLM returned empty response");
+
+  // 打印 LLM 响应（思考内容）
+  console.log("\n" + "=".repeat(80));
+  console.log("[LLM Response - Sync] Tokens - Input:", response.usage?.prompt_tokens ?? 0, "Output:", response.usage?.completion_tokens ?? 0);
+  console.log("-".repeat(80));
+  console.log(content);
+  console.log("=".repeat(80) + "\n");
 
   return {
     content,
