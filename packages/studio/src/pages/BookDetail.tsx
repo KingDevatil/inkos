@@ -1,5 +1,6 @@
 import { fetchJson, useApi, postApi, putApi } from "../hooks/use-api";
 import { useEffect, useMemo, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
@@ -621,13 +622,92 @@ export function BookDetail({
   const currentStatus = settingsStatus ?? (book.status as BookStatus);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <button onClick={nav.toDashboard} className={c.link}>{t("bread.books")}</button>
-        <span className="text-border">/</span>
-        <span className="truncate max-w-[200px]">{book.title}</span>
-      </div>
+    <>
+      {/* Volume Outline Modal - Portal to body */}
+      {showVolumeOutlineModal && createPortal(
+        <div className="fixed inset-0 bg-black/50 z-[9999] p-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="bg-card rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col relative" style={{ minHeight: '400px' }}>
+            <div className="flex items-center justify-between p-6 border-b border-border/40 shrink-0">
+              <h3 className="text-xl font-bold">
+                {selectedVolumeOutline?.title || `第${selectedVolumeOutline?.volumeId}卷 卷纲`}
+              </h3>
+              <button
+                onClick={() => setShowVolumeOutlineModal(false)}
+                className="p-2 hover:bg-secondary rounded-lg transition-all shrink-0"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div
+              className="flex-1 overflow-y-auto p-6 min-h-0 overscroll-contain"
+              onWheel={(e) => {
+                const target = e.currentTarget;
+                const isAtTop = target.scrollTop === 0;
+                const isAtBottom = target.scrollHeight - target.scrollTop === target.clientHeight;
+
+                // Prevent scroll propagation when at boundaries
+                if ((isAtTop && e.deltaY < 0) || (isAtBottom && e.deltaY > 0)) {
+                  e.stopPropagation();
+                }
+              }}
+              onTouchMove={(e) => {
+                // Prevent touch scroll propagation
+                e.stopPropagation();
+              }}
+            >
+              {loadingVolumeOutline ? (
+                <div className="flex items-center justify-center h-64">
+                  <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+                </div>
+              ) : selectedVolumeOutline?.outline ? (
+                <div className="prose prose-sm max-w-none dark:prose-invert">
+                  <div className="whitespace-pre-wrap text-sm text-muted-foreground">
+                    {selectedVolumeOutline.outline}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground">
+                  <FileText size={48} className="mb-4 opacity-50" />
+                  <p>暂无卷纲内容</p>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 p-6 border-t border-border/40 relative shrink-0">
+              <button
+                onClick={() => setShowVolumeOutlineModal(false)}
+                className="px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all shrink-0"
+              >
+                关闭
+              </button>
+              {selectedVolumeOutline && (
+                <button
+                  onClick={() => {
+                    if (selectedVolumeOutline.isDetail) {
+                      generateVolumeDetailOutline(selectedVolumeOutline.volumeId);
+                    } else {
+                      rewriteVolumeOutline(selectedVolumeOutline.volumeId);
+                    }
+                    setShowVolumeOutlineModal(false);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all shrink-0"
+                >
+                  <RefreshCw size={14} />
+                  {selectedVolumeOutline.isDetail ? '重写详细卷纲' : '重写卷纲'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Breadcrumb */}
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <button onClick={nav.toDashboard} className={c.link}>{t("bread.books")}</button>
+          <span className="text-border">/</span>
+          <span className="truncate max-w-[200px]">{book.title}</span>
+        </div>
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
@@ -1046,87 +1126,7 @@ export function BookDetail({
         )}
       </div>
 
-      {/* Modals - Outside main container to avoid clipping */}
-      <div id="modal-root">
-        {/* Volume Outline Modal */}
-        {showVolumeOutlineModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" style={{ maxHeight: '100vh' }}>
-            <div className="bg-card rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col relative z-[101]" style={{ minHeight: '400px' }}>
-              <div className="flex items-center justify-between p-6 border-b border-border/40 shrink-0">
-                <h3 className="text-xl font-bold">
-                  {selectedVolumeOutline?.title || `第${selectedVolumeOutline?.volumeId}卷 卷纲`}
-                </h3>
-                <button
-                  onClick={() => setShowVolumeOutlineModal(false)}
-                  className="p-2 hover:bg-secondary rounded-lg transition-all shrink-0"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-              <div 
-                className="flex-1 overflow-y-auto p-6 min-h-0 overscroll-contain"
-                onWheel={(e) => {
-                  const target = e.currentTarget;
-                  const isAtTop = target.scrollTop === 0;
-                  const isAtBottom = target.scrollHeight - target.scrollTop === target.clientHeight;
-                  
-                  // Prevent scroll propagation when at boundaries
-                  if ((isAtTop && e.deltaY < 0) || (isAtBottom && e.deltaY > 0)) {
-                    e.stopPropagation();
-                  }
-                }}
-                onTouchMove={(e) => {
-                  // Prevent touch scroll propagation
-                  e.stopPropagation();
-                }}
-              >
-                {loadingVolumeOutline ? (
-                  <div className="flex items-center justify-center h-64">
-                    <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-                  </div>
-                ) : selectedVolumeOutline?.outline ? (
-                  <div className="prose prose-sm max-w-none dark:prose-invert">
-                    <div className="whitespace-pre-wrap text-sm text-muted-foreground">
-                      {selectedVolumeOutline.outline}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground">
-                    <FileText size={48} className="mb-4 opacity-50" />
-                    <p>暂无卷纲内容</p>
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-2 p-6 border-t border-border/40 relative z-[102] shrink-0">
-                <button
-                  onClick={() => setShowVolumeOutlineModal(false)}
-                  className="px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all shrink-0"
-                >
-                  关闭
-                </button>
-                {selectedVolumeOutline && (
-                  <button
-                    onClick={() => {
-                      if (selectedVolumeOutline.isDetail) {
-                        generateVolumeDetailOutline(selectedVolumeOutline.volumeId);
-                      } else {
-                        rewriteVolumeOutline(selectedVolumeOutline.volumeId);
-                      }
-                      setShowVolumeOutlineModal(false);
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all shrink-0"
-                  >
-                    <RefreshCw size={14} />
-                    {selectedVolumeOutline.isDetail ? '重写详细卷纲' : '重写卷纲'}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
-
-      </div>
 
       {/* Delete Confirmation */}
       <ConfirmDialog
@@ -2009,8 +2009,8 @@ export function BookDetail({
 
       {/* Volume Outline Regenerate Modal */}
       {showVolumeOutlineRegenerate && (
-        <div className="fixed inset-0 flex items-start justify-center z-[100] pt-20">
-          <div className="bg-card rounded-2xl shadow-xl max-w-2xl w-full mx-4 flex flex-col" style={{ height: 'clamp(400px, 80vh, 800px)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-[100] p-4">
+          <div className="bg-card rounded-2xl shadow-xl max-w-2xl w-full flex flex-col" style={{ height: 'clamp(400px, 80vh, 800px)' }}>
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-border/50 shrink-0">
               <h2 className="text-xl font-bold flex items-center gap-2">
@@ -2116,8 +2116,8 @@ export function BookDetail({
 
       {/* Volume Outline Preview Modal */}
       {showVolumeOutlinePreview && (
-        <div className="fixed inset-0 flex items-start justify-center z-[100] pt-20">
-          <div className="bg-card rounded-2xl shadow-xl max-w-3xl w-full mx-4 flex flex-col" style={{ height: 'clamp(400px, 80vh, 800px)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-[100] p-4">
+          <div className="bg-card rounded-2xl shadow-xl max-w-3xl w-full flex flex-col" style={{ height: 'clamp(400px, 80vh, 800px)' }}>
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-border/50 shrink-0">
               <h2 className="text-xl font-bold flex items-center gap-2">
@@ -2234,7 +2234,8 @@ export function BookDetail({
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 

@@ -41,8 +41,28 @@ interface ChatMessage {
   readonly timestamp: number;
 }
 
+interface SharedSessionMeta {
+  readonly activeBookId?: string;
+  readonly automationMode?: string;
+  readonly currentStage?: string;
+  readonly pendingSummary?: string;
+  readonly draftTitle?: string;
+}
+
 interface BookRef {
   readonly id: string;
+}
+
+export function coerceSharedSessionMessages(
+  messages: ReadonlyArray<{ role: "user" | "assistant" | "system"; content: string; timestamp: number }>,
+): ReadonlyArray<ChatMessage> {
+  return messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => ({
+      role: message.role as "user" | "assistant",
+      content: message.content,
+      timestamp: message.timestamp,
+    }));
 }
 
 export function resolveDirectWriteTarget(
@@ -59,6 +79,15 @@ export function resolveDirectWriteTarget(
     return { bookId: null, reason: "missing" };
   }
   return { bookId: null, reason: "ambiguous" };
+}
+
+export function formatSharedSessionContext(meta: SharedSessionMeta): string {
+  return [
+    meta.activeBookId ?? "no-book",
+    meta.draftTitle ? `draft:${meta.draftTitle}` : undefined,
+    meta.automationMode ?? "semi",
+    meta.currentStage,
+  ].filter(Boolean).join(" · ");
 }
 
 // ── Sub-components ──
@@ -202,6 +231,7 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ReadonlyArray<ChatMessage>>([]);
   const [loading, setLoading] = useState(false);
+  const [sessionMeta, setSessionMeta] = useState<SharedSessionMeta>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -219,7 +249,52 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+    void fetchJson<{
+      session?: {
+        activeBookId?: string;
+        automationMode?: string;
+        creationDraft?: {
+          title?: string;
+        };
+        currentExecution?: {
+          status?: string;
+          stageLabel?: string;
+        };
+        pendingDecision?: {
+          summary?: string;
+        };
+        messages?: ReadonlyArray<{ role: "user" | "assistant" | "system"; content: string; timestamp: number }>;
+      };
+      activeBookId?: string;
+    }>("/interaction/session").then((data) => {
+      if (cancelled) return;
+      setSessionMeta({
+        activeBookId: data.activeBookId ?? data.session?.activeBookId,
+        draftTitle: data.session?.creationDraft?.title,
+        automationMode: data.session?.automationMode,
+        currentStage: data.session?.currentExecution?.stageLabel ?? data.session?.currentExecution?.status,
+        pendingSummary: data.session?.pendingDecision?.summary,
+      });
+      setMessages((current) => {
+        if (current.length > 0) return current;
+        return coerceSharedSessionMessages(data.session?.messages ?? []);
+      });
+    }).catch(() => {
+      // keep local empty state on session fetch failures
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
   // SSE events → assistant messages
+  const loadingRef = useRef(false);
+  loadingRef.current = loading;
   useEffect(() => {
     const recent = sse.messages.slice(-1)[0];
     if (!recent || recent.event === "ping") return;
@@ -243,7 +318,7 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
         timestamp: Date.now(),
       }]);
     }
-    if (recent.event === "log" && loading) {
+    if (recent.event === "log" && loadingRef.current) {
       const msg = d.message as string;
       if (msg && (msg.includes("Phase") || msg.includes("streaming") || msg.includes("Writing") || msg.includes("Audit") || msg.includes("Revis"))) {
         setMessages((prev) => {
@@ -263,14 +338,7 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
     return lastStatus?.content.replace("⋯ ", "") ?? "Initializing...";
   }, [messages]);
 
-  const handleSubmit = async () => {
-    const text = input.trim();
-    if (!text || loading) return;
-
-    setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: text, timestamp: Date.now() }]);
-    setLoading(true);
-
+  const executeCommand = async (text: string) => {
     const lower = text.toLowerCase();
 
     try {
@@ -294,21 +362,41 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
           content:
             target.reason === "missing"
               ? (isZh ? "✗ 还没有书，先创建一本再写。" : "✗ No books yet. Create one first.")
-              : (isZh ? "✗ 当前有多本书，请先打开目标书籍后再执行“写下一章”。" : '✗ Multiple books found. Open the target book first, then run "write next".'),
+              : (isZh ? '✗ 当前有多本书，请先打开目标书籍后再执行"写下一章"。' : '✗ Multiple books found. Open the target book first, then run "write next".'),
           timestamp: Date.now(),
         }]);
         return;
       }
 
-      const data = await fetchJson<{ response?: string; error?: string }>("/agent", {
+      const data = await fetchJson<{
+        response?: string;
+        error?: string;
+        session?: {
+          activeBookId?: string;
+          automationMode?: string;
+          creationDraft?: { title?: string };
+          currentExecution?: { status?: string; stageLabel?: string };
+          pendingDecision?: { summary?: string };
+          messages?: ReadonlyArray<{ role: "user" | "assistant" | "system"; content: string; timestamp: number }>;
+        };
+      }>("/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction: text }),
+        body: JSON.stringify({ instruction: text, activeBookId }),
       });
       setLoading(false);
+      if (data.session) {
+        setSessionMeta({
+          activeBookId: data.session.activeBookId ?? activeBookId,
+          draftTitle: data.session.creationDraft?.title,
+          automationMode: data.session.automationMode,
+          currentStage: data.session.currentExecution?.stageLabel ?? data.session.currentExecution?.status,
+          pendingSummary: data.session.pendingDecision?.summary,
+        });
+      }
       setMessages((prev) => [...prev, {
         role: "assistant",
-        content: data.response ?? data.error ?? "Acknowledged.",
+        content: data.response ?? "Acknowledged.",
         timestamp: Date.now(),
       }]);
     } catch (e) {
@@ -321,11 +409,21 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
     }
   };
 
-  const handleQuickCommand = (command: string) => {
-    setInput(command);
-    setTimeout(() => {
-      handleSubmit();
-    }, 50);
+  const handleSubmit = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput("");
+    setMessages((prev) => [...prev, { role: "user", content: text, timestamp: Date.now() }]);
+    setLoading(true);
+    await executeCommand(text);
+  };
+
+  const handleQuickCommand = async (command: string) => {
+    if (loading) return;
+    setInput("");
+    setMessages((prev) => [...prev, { role: "user", content: command, timestamp: Date.now() }]);
+    setLoading(true);
+    await executeCommand(command);
   };
 
   const isZh = t("nav.connected") === "已连接";
@@ -361,16 +459,25 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
         <>
           {/* ── Section 1: Header ── */}
           <div className="h-12 shrink-0 px-4 flex items-center justify-between border-b border-border/40">
-            <div className="flex items-center gap-2.5">
-              <div className="relative">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="relative shrink-0">
                 <Sparkles size={15} className="text-primary chat-icon-glow" />
                 {loading && (
                   <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-primary rounded-full animate-ping" />
                 )}
               </div>
-              <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">
-                InkOS Assistant
-              </span>
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">
+                  InkOS Assistant
+                </div>
+                <div className="text-[10px] text-muted-foreground/60 truncate">
+                  {formatSharedSessionContext({
+                    activeBookId: sessionMeta.activeBookId ?? activeBookId,
+                    automationMode: sessionMeta.automationMode,
+                    currentStage: sessionMeta.currentStage,
+                  })}
+                </div>
+              </div>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -407,6 +514,15 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
             </div>
           )}
 
+          {!loading && sessionMeta.pendingSummary && (
+            <div className="shrink-0 px-4 py-2 border-b border-border/30 bg-amber-500/[0.06] fade-in">
+              <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-300">
+                <AlertTriangle size={12} />
+                <span className="truncate">{sessionMeta.pendingSummary}</span>
+              </div>
+            </div>
+          )}
+
           {/* ── Section 3: Messages ── */}
           <div
             ref={scrollRef}
@@ -414,8 +530,8 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
           >
             {messages.length === 0 && !loading && <EmptyState />}
 
-            {messages.map((msg) => (
-              <MessageBubble key={msg.timestamp} msg={msg} />
+            {messages.map((msg, i) => (
+              <MessageBubble key={`${msg.timestamp}-${i}`} msg={msg} />
             ))}
 
             {loading && !messages.some((m) => m.content.startsWith("⋯")) && (
@@ -428,22 +544,22 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
             <QuickChip
               icon={<Zap size={11} />}
               label={t("dash.writeNext")}
-              onClick={() => handleQuickCommand(isZh ? "写下一章" : "write next")}
+              onClick={() => void handleQuickCommand(isZh ? "写下一章" : "write next")}
             />
             <QuickChip
               icon={<Search size={11} />}
               label={t("book.audit")}
-              onClick={() => handleQuickCommand(isZh ? "审计第1章" : "audit chapter 1")}
+              onClick={() => void handleQuickCommand(isZh ? "审计第1章" : "audit chapter 1")}
             />
             <QuickChip
               icon={<FileOutput size={11} />}
               label={t("book.export")}
-              onClick={() => handleQuickCommand(isZh ? "导出全书" : "export book as epub")}
+              onClick={() => void handleQuickCommand(isZh ? "导出全书" : "export book as epub")}
             />
             <QuickChip
               icon={<TrendingUp size={11} />}
               label={t("nav.radar")}
-              onClick={() => handleQuickCommand(isZh ? "扫描市场趋势" : "scan market trends")}
+              onClick={() => void handleQuickCommand(isZh ? "扫描市场趋势" : "scan market trends")}
             />
           </div>
 

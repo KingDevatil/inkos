@@ -1,0 +1,134 @@
+import { z } from "zod";
+import { AutomationModeSchema, type AutomationMode } from "./modes.js";
+import { ExecutionStateSchema, InteractionEventSchema, type InteractionEvent } from "./events.js";
+
+export const PendingDecisionSchema = z.object({
+  kind: z.string().min(1),
+  bookId: z.string().min(1),
+  chapterNumber: z.number().int().min(1).optional(),
+  summary: z.string().min(1),
+});
+
+export type PendingDecision = z.infer<typeof PendingDecisionSchema>;
+
+export const InteractionMessageSchema = z.object({
+  role: z.enum(["user", "assistant", "system"]),
+  content: z.string().min(1),
+  timestamp: z.number().int().nonnegative(),
+});
+
+export type InteractionMessage = z.infer<typeof InteractionMessageSchema>;
+
+export const BookCreationDraftSchema = z.object({
+  concept: z.string().min(1),
+  title: z.string().min(1).optional(),
+  genre: z.string().min(1).optional(),
+  platform: z.string().min(1).optional(),
+  language: z.enum(["zh", "en"]).optional(),
+  targetChapters: z.number().int().min(1).optional(),
+  chapterWordCount: z.number().int().min(1).optional(),
+  blurb: z.string().min(1).optional(),
+  worldPremise: z.string().min(1).optional(),
+  settingNotes: z.string().min(1).optional(),
+  protagonist: z.string().min(1).optional(),
+  supportingCast: z.string().min(1).optional(),
+  conflictCore: z.string().min(1).optional(),
+  volumeOutline: z.string().min(1).optional(),
+  constraints: z.string().min(1).optional(),
+  authorIntent: z.string().min(1).optional(),
+  currentFocus: z.string().min(1).optional(),
+  nextQuestion: z.string().min(1).optional(),
+  missingFields: z.array(z.string().min(1)).default([]),
+  readyToCreate: z.boolean().default(false),
+});
+
+export type BookCreationDraft = z.infer<typeof BookCreationDraftSchema>;
+
+export const InteractionSessionSchema = z.object({
+  sessionId: z.string().min(1),
+  projectRoot: z.string().min(1),
+  activeBookId: z.string().min(1).optional(),
+  activeChapterNumber: z.number().int().min(1).optional(),
+  creationDraft: BookCreationDraftSchema.optional(),
+  automationMode: AutomationModeSchema.default("semi"),
+  messages: z.array(InteractionMessageSchema).default([]),
+  events: z.array(InteractionEventSchema).default([]),
+  pendingDecision: PendingDecisionSchema.optional(),
+  currentExecution: ExecutionStateSchema.optional(),
+});
+
+export type InteractionSession = z.infer<typeof InteractionSessionSchema>;
+
+export function bindActiveBook(
+  session: InteractionSession,
+  bookId: string,
+  chapterNumber?: number,
+): InteractionSession {
+  return {
+    ...session,
+    activeBookId: bookId,
+    ...(chapterNumber !== undefined ? { activeChapterNumber: chapterNumber } : {}),
+  };
+}
+
+export function clearPendingDecision(session: InteractionSession): InteractionSession {
+  if (!session.pendingDecision) {
+    return session;
+  }
+
+  return {
+    ...session,
+    pendingDecision: undefined,
+  };
+}
+
+export function updateCreationDraft(
+  session: InteractionSession,
+  draft: BookCreationDraft,
+): InteractionSession {
+  return {
+    ...session,
+    creationDraft: draft,
+  };
+}
+
+export function clearCreationDraft(session: InteractionSession): InteractionSession {
+  if (!session.creationDraft) {
+    return session;
+  }
+
+  return {
+    ...session,
+    creationDraft: undefined,
+  };
+}
+
+export function updateAutomationMode(
+  session: InteractionSession,
+  automationMode: AutomationMode,
+): InteractionSession {
+  return {
+    ...session,
+    automationMode,
+  };
+}
+
+export function appendInteractionMessage(
+  session: InteractionSession,
+  message: InteractionMessage,
+): InteractionSession {
+  return {
+    ...session,
+    messages: [...session.messages, message].sort((left, right) => left.timestamp - right.timestamp),
+  };
+}
+
+export function appendInteractionEvent(
+  session: InteractionSession,
+  event: InteractionEvent,
+): InteractionSession {
+  return {
+    ...session,
+    events: [...session.events, event],
+  };
+}

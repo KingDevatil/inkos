@@ -118,6 +118,7 @@ const strings = {
   "nav.doctor": { zh: "环境诊断", en: "Doctor" },
 
   // Book Detail extras
+  "book.wordsPerChapter": { zh: "字/章", en: "words/chapter" },
   "book.deleteBook": { zh: "删除书籍", en: "Delete Book" },
   "book.confirmDelete": { zh: "确认删除此书及所有章节？", en: "Delete this book and all chapters?" },
   "book.settings": { zh: "书籍设置", en: "Book Settings" },
