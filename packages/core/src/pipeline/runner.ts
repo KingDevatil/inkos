@@ -1874,7 +1874,7 @@ export class PipelineRunner {
   }
 
   /** Revise the latest (or specified) chapter based on audit issues. */
-  async reviseDraft(bookId: string, chapterNumber?: number, mode: ReviseMode = DEFAULT_REVISE_MODE): Promise<ReviseResult> {
+  async reviseDraft(bookId: string, chapterNumber?: number, mode: ReviseMode = DEFAULT_REVISE_MODE, brief?: string): Promise<ReviseResult> {
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       const book = await this.state.loadBookConfig(bookId);
@@ -1973,10 +1973,12 @@ export class PipelineRunner {
               ruleStack: reviseControlInput.composed.ruleStack,
               lengthSpec,
               ragManager: ragManager || undefined,
+              brief,
             }
           : {
               lengthSpec,
               ragManager: ragManager || undefined,
+              brief,
             },
       );
 

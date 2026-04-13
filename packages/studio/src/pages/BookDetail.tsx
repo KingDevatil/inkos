@@ -531,7 +531,7 @@ export function BookDetail({
       if (brief === null) return;
       setRevisingChapters((prev) => [...prev, chapterNum]);
       try {
-        await fetchJson(`/books/${bookId}/chapters/${chapterNum}/revise`, {
+        await fetchJson(`/books/${bookId}/revise/${chapterNum}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mode, brief: brief.trim() || undefined }),

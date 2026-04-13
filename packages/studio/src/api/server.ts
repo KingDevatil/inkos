@@ -1358,13 +1358,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     broadcast("revise:start", { bookId: id, chapter: chapterNum });
     try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig({
-        externalContext: body.brief,
-      }));
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
       const result = await pipeline.reviseDraft(
         id,
         chapterNum,
         (body.mode ?? "spot-fix") as "spot-fix" | "polish" | "rewrite" | "rework" | "anti-detect",
+        body.brief,
       );
       broadcast("revise:complete", { bookId: id, chapter: chapterNum });
       return c.json(result);

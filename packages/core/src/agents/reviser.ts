@@ -81,6 +81,7 @@ export class ReviserAgent extends BaseAgent {
       ruleStack?: RuleStack;
       lengthSpec?: LengthSpec;
       ragManager?: RAGManager;
+      brief?: string;
     },
   ): Promise<ReviseOutput> {
     const [currentState, ledger, hooks, styleGuideRaw, volumeOutline, storyBible, characterMatrix, chapterSummaries, parentCanon, fanficCanon] = await Promise.all([
@@ -257,16 +258,31 @@ ${outputFormat}`;
       ? this.buildReducedControlBlock(options.chapterIntent, options.contextPackage, options.ruleStack)
       : "";
     const lengthGuidanceBlock = options?.lengthSpec
-      ? `\n## 字数护栏\n目标字数：${options.lengthSpec.target}\n允许区间：${options.lengthSpec.softMin}-${options.lengthSpec.softMax}\n极限区间：${options.lengthSpec.hardMin}-${options.lengthSpec.hardMax}\n如果修正后超出允许区间，请优先压缩冗余解释、重复动作和弱信息句，不得新增支线或删掉核心事实。\n`
+      ? `
+## 字数护栏
+目标字数：${options.lengthSpec.target}
+允许区间：${options.lengthSpec.softMin}-${options.lengthSpec.softMax}
+极限区间：${options.lengthSpec.hardMin}-${options.lengthSpec.hardMax}
+如果修正后超出允许区间，请优先压缩冗余解释、重复动作和弱信息句，不得新增支线或删掉核心事实。
+`
       : "";
     const styleGuideBlock = reducedControlBlock.length === 0
-      ? `\n## 文风指南\n${styleGuide}`
+      ? `
+## 文风指南
+${styleGuide}`
+      : "";
+    const briefBlock = options?.brief
+      ? `
+## 作者修订意图
+${options.brief}
+
+请在修订时优先考虑以上作者意图，但仍需遵守修稿模式的限制。`
       : "";
 
     const userPrompt = `请修正第${chapterNumber}章。
 
 ## 审稿问题
-${issueList}
+${issueList}${briefBlock}
 
 ## 当前状态卡
 ${currentState}
