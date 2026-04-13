@@ -709,45 +709,22 @@ export class PipelineRunner {
     );
     const stageLanguage = await this.resolveBookLanguage(book);
 
-    console.log(`\n[PipelineRunner.initBook] 创建临时目录`);
-    console.log(`[PipelineRunner.initBook] 临时目录路径：${stagingBookDir}`);
-    
-    // 创建临时目录后，尝试从正式书籍目录复制审计配置到临时目录
+    // 创建临时目录，并尝试从正式书籍目录复制审计配置
     try {
-      console.log(`[PipelineRunner.initBook] 检查正式书籍目录是否存在审计配置`);
       const formalAuditConfigPath = join(bookDir, "audit-config.json");
       try {
         await access(formalAuditConfigPath);
-        console.log(`[PipelineRunner.initBook] 正式书籍目录存在审计配置：${formalAuditConfigPath}`);
-        
-        // 创建临时目录
         await mkdir(stagingBookDir, { recursive: true });
-        console.log(`[PipelineRunner.initBook] 临时目录创建成功`);
-        
-        // 复制审计配置到临时目录
         const tempAuditConfigPath = join(stagingBookDir, "audit-config.json");
         await copyFile(formalAuditConfigPath, tempAuditConfigPath);
-        console.log(`[PipelineRunner.initBook] 审计配置已从正式目录复制到临时目录：${tempAuditConfigPath}`);
-        
-        // 验证复制
-        try {
-          await access(tempAuditConfigPath);
-          console.log(`[PipelineRunner.initBook] 验证：临时目录中的审计配置文件存在`);
-        } catch {
-          console.warn(`[PipelineRunner.initBook] 验证：临时目录中的审计配置文件不存在！`);
-        }
       } catch {
-        console.log(`[PipelineRunner.initBook] 正式书籍目录不存在审计配置，跳过复制`);
-        // 创建临时目录
+        // 正式书籍目录不存在审计配置，仅创建临时目录
         await mkdir(stagingBookDir, { recursive: true });
-        console.log(`[PipelineRunner.initBook] 临时目录创建成功`);
       }
     } catch (e) {
-      console.warn(`[PipelineRunner.initBook] 复制审计配置失败：${e instanceof Error ? e.message : String(e)}`);
-      // 创建临时目录
+      // 复制审计配置失败，仅创建临时目录
       try {
         await mkdir(stagingBookDir, { recursive: true });
-        console.log(`[PipelineRunner.initBook] 临时目录创建成功`);
       } catch (mkdirError) {
         console.error(`[PipelineRunner.initBook] 临时目录创建失败：${mkdirError instanceof Error ? mkdirError.message : String(mkdirError)}`);
       }
@@ -828,10 +805,6 @@ export class PipelineRunner {
       // 如果加载审计配置失败，使用默认值
       this.config.logger?.debug(`Failed to load audit config: ${e instanceof Error ? e.message : String(e)}`);
     }
-    
-    // 输出加载的审计配置，以便调试
-    console.log(`Loaded audit config for book ${book.id}: passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}`);
-    this.config.logger?.info(`Loaded audit config for book ${book.id}: passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}`);
     
     const foundation = await this.generateAndReviewFoundation({
       generate: (reviewFeedback) => architect.generateFoundation(
