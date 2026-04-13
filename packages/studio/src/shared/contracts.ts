@@ -91,13 +91,21 @@ export interface ReviewActionPayload {
 
 // --- Runs ---
 
-export type RunAction = "draft" | "audit" | "revise" | "write-next";
+export type RunAction =
+  | "draft"
+  | "audit"
+  | "revise"
+  | "write-next"
+  | "regenerate-outline"
+  | "rewrite-volume-outline"
+  | "generate-volume-detail"
+  | "rewrite-volume-chapters";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface RunLogEntry {
   readonly timestamp: string;
-  readonly level: "info" | "warn" | "error";
+  readonly level: "debug" | "info" | "warn" | "error";
   readonly message: string;
 }
 

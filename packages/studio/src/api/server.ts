@@ -2921,6 +2921,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const id = c.req.param("id");
     const volumeId = parseInt(c.req.param("volumeId"), 10);
 
+    // Create run record for task management
+    const run = runStore.create({
+      bookId: id,
+      action: "rewrite-volume-outline",
+    });
+    runStore.markRunning(run.id, `重写第${volumeId}卷卷纲`);
+
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       const book = await pipeline["state"].loadBookConfig(id);
@@ -2930,10 +2937,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const outlineContent = await readFile(outlinePath, "utf-8");
       
       // TODO: Implement volume outline rewrite logic
-      // For now, just return success
-      return c.json({ ok: true, message: "Volume outline rewrite started" });
+      // For now, just mark as succeeded
+      runStore.succeed(run.id, { volumeId, message: "Volume outline rewrite started" });
+      return c.json({ ok: true, message: "Volume outline rewrite started", runId: run.id });
     } catch (e) {
-      return c.json({ error: String(e) }, 500);
+      const error = e instanceof Error ? e.message : String(e);
+      runStore.fail(run.id, error);
+      return c.json({ error, runId: run.id }, 500);
     }
   });
 
@@ -2941,6 +2951,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   app.post("/api/books/:id/volumes/:volumeId/generate-detail", async (c) => {
     const id = c.req.param("id");
     const volumeId = parseInt(c.req.param("volumeId"), 10);
+
+    // Create run record for task management
+    const run = runStore.create({
+      bookId: id,
+      action: "generate-volume-detail",
+    });
+    runStore.markRunning(run.id, `生成第${volumeId}卷详细卷纲`);
 
     // Create file log stream for this operation
     const logPath = join(root, "inkos.log");
@@ -2952,10 +2969,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       write(entry: LogEntry): void {
         sseSink.write(entry);
         fileSink.write(entry);
+        // Also append log to run
+        runStore.appendLog(run.id, {
+          level: entry.level,
+          message: entry.message,
+          timestamp: entry.timestamp || new Date().toISOString(),
+        });
       },
     };
 
-    broadcast("volume:generate-detail:start", { bookId: id, volumeId });
+    broadcast("volume:generate-detail:start", { bookId: id, volumeId, runId: run.id });
     combinedSink.write({ 
       level: "info", 
       tag: "architect", 
@@ -3022,10 +3045,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         timestamp: new Date().toISOString(),
       });
       
+      runStore.succeed(run.id, { volumeId, volumeDetail: filteredContent });
       broadcast("volume:generate-detail:complete", { 
         bookId: id, 
         volumeId,
-        volumeDetail: result.volumeDetail 
+        volumeDetail: result.volumeDetail,
+        runId: run.id
       });
       
       // Close log stream
@@ -3034,7 +3059,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       return c.json({ 
         ok: true, 
         volumeId,
-        volumeDetail: result.volumeDetail 
+        volumeDetail: result.volumeDetail,
+        runId: run.id
       });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
@@ -3044,12 +3070,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         message: `第${volumeId}卷详细卷纲生成失败：${error}`,
         timestamp: new Date().toISOString(),
       });
-      broadcast("volume:generate-detail:error", { bookId: id, volumeId, error });
+      runStore.fail(run.id, error);
+      broadcast("volume:generate-detail:error", { bookId: id, volumeId, error, runId: run.id });
       
       // Close log stream
       logStream.end();
       
-      return c.json({ error }, 500);
+      return c.json({ error, runId: run.id }, 500);
     }
   });
 
@@ -3138,6 +3165,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const id = c.req.param("id");
     const volumeId = parseInt(c.req.param("volumeId"), 10);
 
+    // Create run record for task management
+    const run = runStore.create({
+      bookId: id,
+      action: "rewrite-volume-chapters",
+    });
+    runStore.markRunning(run.id, `重写第${volumeId}卷章节`);
+
     // Create file log stream for this operation
     const logPath = join(root, "inkos.log");
     const logStream = createWriteStream(logPath, { flags: "a" });
@@ -3148,10 +3182,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       write(entry: LogEntry): void {
         sseSink.write(entry);
         fileSink.write(entry);
+        // Also append log to run
+        runStore.appendLog(run.id, {
+          level: entry.level,
+          message: entry.message,
+          timestamp: entry.timestamp || new Date().toISOString(),
+        });
       },
     };
 
-    broadcast("volume:rewrite-chapters:start", { bookId: id, volumeId });
+    broadcast("volume:rewrite-chapters:start", { bookId: id, volumeId, runId: run.id });
     combinedSink.write({ 
       level: "info", 
       tag: "writer", 
@@ -3170,12 +3210,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         timestamp: new Date().toISOString(),
       });
       
-      broadcast("volume:rewrite-chapters:complete", { bookId: id, volumeId });
+      runStore.succeed(run.id, { volumeId });
+      broadcast("volume:rewrite-chapters:complete", { bookId: id, volumeId, runId: run.id });
       
       // Close log stream
       logStream.end();
       
-      return c.json({ ok: true });
+      return c.json({ ok: true, runId: run.id });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       combinedSink.write({ 
@@ -3184,12 +3225,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         message: `第${volumeId}卷章节重写失败：${error}`,
         timestamp: new Date().toISOString(),
       });
-      broadcast("volume:rewrite-chapters:error", { bookId: id, volumeId, error });
+      runStore.fail(run.id, error);
+      broadcast("volume:rewrite-chapters:error", { bookId: id, volumeId, error, runId: run.id });
       
       // Close log stream
       logStream.end();
       
-      return c.json({ error }, 500);
+      return c.json({ error, runId: run.id }, 500);
     }
   });
 
@@ -3701,33 +3743,44 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // --- Regenerate Outline ---
   app.post("/api/books/:id/regenerate-outline", async (c) => {
     const id = c.req.param("id");
-    const { genre, brief } = await c.req.json<{ genre?: string; brief?: string }>();
+    const { genre, brief, intent, rewriteLevel } = await c.req.json<{ genre?: string; brief?: string; intent?: string; rewriteLevel?: string }>();
 
-    if (!genre) {
-      return c.json({ error: "genre is required" }, 400);
+    // Support both genre-based and intent-based regeneration
+    if (!genre && !intent) {
+      return c.json({ error: "genre or intent is required" }, 400);
     }
 
-    broadcast("outline:regenerate:start", { bookId: id, genre });
+    // Create run record for task management
+    const run = runStore.create({
+      bookId: id,
+      action: "regenerate-outline",
+    });
+    runStore.markRunning(run.id, intent ? "重写卷纲" : "重新生成大纲");
+
+    broadcast("outline:regenerate:start", { bookId: id, genre, runId: run.id });
     try {
       const book = await state.loadBookConfig(id);
       const now = new Date().toISOString();
 
       const updatedBook = {
         ...book,
-        genre,
+        ...(genre ? { genre } : {}),
         updatedAt: now,
       };
 
       await state.saveBookConfig(id, updatedBook);
 
-      const pipeline = new PipelineRunner(await buildPipelineConfig({ externalContext: brief }));
-      await pipeline.regenerateFoundation(updatedBook, brief);
+      const pipeline = new PipelineRunner(await buildPipelineConfig({ externalContext: brief || intent }));
+      const result = await pipeline.regenerateFoundation(updatedBook, brief || intent);
 
-      broadcast("outline:regenerate:complete", { bookId: id });
-      return c.json({ ok: true, bookId: id });
+      runStore.succeed(run.id, { bookId: id, result });
+      broadcast("outline:regenerate:complete", { bookId: id, runId: run.id });
+      return c.json({ ok: true, bookId: id, runId: run.id, result });
     } catch (e) {
-      broadcast("outline:regenerate:error", { bookId: id, error: String(e) });
-      return c.json({ error: String(e) }, 500);
+      const error = e instanceof Error ? e.message : String(e);
+      runStore.fail(run.id, error);
+      broadcast("outline:regenerate:error", { bookId: id, error, runId: run.id });
+      return c.json({ error, runId: run.id }, 500);
     }
   });
 
