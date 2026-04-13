@@ -229,18 +229,23 @@ export class StateManager {
   async listBooks(): Promise<ReadonlyArray<string>> {
     try {
       const entries = await readdir(this.booksDir);
+      console.log(`[StateManager] listBooks - entries:`, entries);
       const bookIds: string[] = [];
       for (const entry of entries) {
         const bookJsonPath = join(this.booksDir, entry, "book.json");
         try {
           await stat(bookJsonPath);
           bookIds.push(entry);
-        } catch {
+          console.log(`[StateManager] listBooks - found book: ${entry}`);
+        } catch (e) {
+          console.log(`[StateManager] listBooks - not a book: ${entry}, error:`, e);
           // not a book directory
         }
       }
+      console.log(`[StateManager] listBooks - returning:`, bookIds);
       return bookIds;
-    } catch {
+    } catch (e) {
+      console.error(`[StateManager] listBooks - error:`, e);
       return [];
     }
   }

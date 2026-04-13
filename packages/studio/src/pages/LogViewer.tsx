@@ -1,7 +1,10 @@
-import { useApi } from "../hooks/use-api";
+import { useApi, postApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
+import { useSSE } from "../hooks/use-sse";
+import { useEffect, useState, useCallback } from "react";
+import { RefreshCw, Square } from "lucide-react";
 
 interface LogEntry {
   readonly level?: string;
@@ -24,6 +27,64 @@ const LEVEL_COLORS: Record<string, string> = {
 export function LogViewer({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const { data, refetch } = useApi<{ entries: ReadonlyArray<LogEntry> }>("/logs");
+  const { messages, connected } = useSSE("/api/events");
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [hasActiveRun, setHasActiveRun] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  // Merge initial logs with SSE logs
+  useEffect(() => {
+    if (data?.entries) {
+      setLogs([...data.entries]);
+    }
+  }, [data]);
+
+  // Add SSE log messages
+  useEffect(() => {
+    const logMessages = messages.filter(m => m.event === "log");
+    if (logMessages.length > 0) {
+      const newEntries = logMessages.map(m => {
+        const data = m.data as { level?: string; tag?: string; message?: string };
+        return {
+          level: data?.level || "info",
+          tag: data?.tag,
+          message: data?.message || String(m.data),
+          timestamp: new Date(m.timestamp).toISOString(),
+        };
+      });
+      setLogs(prev => [...prev, ...newEntries].slice(-500));
+    }
+  }, [messages]);
+
+  // Check for active runs
+  const checkActiveRun = useCallback(async () => {
+    try {
+      const result = await fetch("/api/runs/active");
+      const data = await result.json();
+      setHasActiveRun(data.active);
+    } catch {
+      setHasActiveRun(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkActiveRun();
+    const interval = setInterval(checkActiveRun, 2000);
+    return () => clearInterval(interval);
+  }, [checkActiveRun]);
+
+  const handleCancel = async () => {
+    if (!hasActiveRun) return;
+    setCancelling(true);
+    try {
+      await postApi("/runs/cancel", {});
+      setHasActiveRun(false);
+    } catch (e) {
+      console.error("Failed to cancel run:", e);
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -34,20 +95,40 @@ export function LogViewer({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunct
       </div>
 
       <div className="flex items-baseline justify-between">
-        <h1 className="font-serif text-3xl">{t("logs.title")}</h1>
-        <button
-          onClick={() => refetch()}
-          className={`px-4 py-2.5 text-sm rounded-md ${c.btnSecondary}`}
-        >
-          {t("common.refresh")}
-        </button>
+        <div className="flex items-center gap-3">
+          <h1 className="font-serif text-3xl">{t("logs.title")}</h1>
+          <span className={`text-xs px-2 py-1 rounded-full ${connected ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"}`}>
+            {connected ? "实时连接" : "连接断开"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => refetch()}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm rounded-md ${c.btnSecondary}`}
+          >
+            <RefreshCw size={16} />
+            {t("common.refresh")}
+          </button>
+          <button
+            onClick={handleCancel}
+            disabled={!hasActiveRun || cancelling}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm rounded-md transition-all ${
+              hasActiveRun
+                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                : "bg-muted text-muted-foreground cursor-not-allowed"
+            }`}
+          >
+            <Square size={16} />
+            {cancelling ? "终止中..." : "终止进程"}
+          </button>
+        </div>
       </div>
 
       <div className={`border ${c.cardStatic} rounded-lg overflow-hidden`}>
         <div className="p-4 max-h-[600px] overflow-y-auto">
-          {data?.entries && data.entries.length > 0 ? (
+          {logs.length > 0 ? (
             <div className="space-y-1 font-mono text-sm leading-relaxed">
-              {[...data.entries].reverse().map((entry, i) => (
+              {[...logs].reverse().map((entry, i) => (
                 <div key={i} className="flex gap-2">
                   {entry.timestamp && (
                     <span className="text-muted-foreground shrink-0 w-20 tabular-nums">

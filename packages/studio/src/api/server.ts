@@ -16,7 +16,7 @@ import {
   type LogEntry,
   type ChapterMeta,
 } from "@actalk/inkos-core";
-import { access, readFile, writeFile, readdir, unlink, rename, mkdir, stat } from "node:fs/promises";
+import { access, readFile, writeFile, readdir, unlink, rename, mkdir, stat, rm } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -29,6 +29,7 @@ import {
   getDefaultAuditConfig,
   saveProjectAuditConfig,
 } from "@actalk/inkos-core";
+import { RunStore } from "./lib/run-store.js";
 
 // --- Event bus for SSE ---
 
@@ -44,9 +45,51 @@ function broadcast(event: string, data: unknown): void {
 
 // --- Server factory ---
 
+// --- Temp directory cleanup ---
+
+const TEMP_DIR_PREFIX = ".tmp-book-create-";
+const TEMP_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+async function cleanupTempDirectories(booksDir: string): Promise<void> {
+  try {
+    const files = await readdir(booksDir);
+    const tempDirs = files.filter(f => f.startsWith(TEMP_DIR_PREFIX));
+    const now = Date.now();
+    let cleaned = 0;
+
+    for (const tempDirName of tempDirs) {
+      try {
+        const tempDir = join(booksDir, tempDirName);
+        const stats = await stat(tempDir);
+        const age = now - stats.mtime.getTime();
+
+        // Clean up directories older than 24 hours
+        if (age > TEMP_DIR_MAX_AGE_MS) {
+          await rm(tempDir, { recursive: true, force: true });
+          cleaned++;
+          console.log(`[Cleanup] Removed old temp directory: ${tempDirName} (age: ${Math.round(age / 1000 / 60)} minutes)`);
+        }
+      } catch (e) {
+        console.warn(`[Cleanup] Failed to clean temp directory ${tempDirName}:`, e);
+      }
+    }
+
+    if (cleaned > 0) {
+      console.log(`[Cleanup] Cleaned up ${cleaned} temporary directories`);
+    }
+  } catch (e) {
+    console.warn("[Cleanup] Failed to cleanup temp directories:", e);
+  }
+}
+
 export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   const app = new Hono();
   const state = new StateManager(root);
+  const booksDir = join(root, "books");
+
+  // Run cleanup on startup and every hour
+  cleanupTempDirectories(booksDir);
+  setInterval(() => cleanupTempDirectories(booksDir), 60 * 60 * 1000);
   let cachedConfig = initialConfig;
 
   app.use("/*", cors());
@@ -136,15 +179,25 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // --- Books ---
 
   app.get("/api/books", async (c) => {
+    console.log(`[API] /api/books - booksDir: ${booksDir}`);
     const bookIds = await state.listBooks();
+    console.log(`[API] /api/books - found bookIds:`, bookIds);
     const books = await Promise.all(
       bookIds.map(async (id) => {
-        const book = await state.loadBookConfig(id);
-        const nextChapter = await state.getNextChapterNumber(id);
-        return { ...book, chaptersWritten: nextChapter - 1 };
+        try {
+          const book = await state.loadBookConfig(id);
+          const nextChapter = await state.getNextChapterNumber(id);
+          return { ...book, chaptersWritten: nextChapter - 1 };
+        } catch (e) {
+          console.warn(`[API] Failed to load book "${id}":`, e);
+          return null;
+        }
       }),
     );
-    return c.json({ books });
+    // Filter out null values (failed to load)
+    const result = books.filter((b): b is NonNullable<typeof b> => b !== null);
+    console.log(`[API] /api/books - returning ${result.length} books`);
+    return c.json({ books: result });
   });
 
   app.get("/api/books/:id", async (c) => {
@@ -290,11 +343,25 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         bookCreateStatus.delete(bookId);
         broadcast("book:created", { bookId });
       },
-      (e) => {
+      async (e) => {
         const error = e instanceof Error ? e.message : String(e);
         console.log(`\n[8] 书籍创建失败：${error}`);
         bookCreateStatus.set(bookId, { status: "error", error });
         broadcast("book:error", { bookId, error });
+        
+        // Clean up temporary directories on failure
+        console.log(`[8.1] 清理临时目录...`);
+        try {
+          const files = await readdir(booksDir);
+          const tempDirs = files.filter(f => f.startsWith(TEMP_DIR_PREFIX) && f.includes(bookId));
+          for (const tempDirName of tempDirs) {
+            const tempDir = join(booksDir, tempDirName);
+            await rm(tempDir, { recursive: true, force: true });
+            console.log(`[8.2] 已清理临时目录：${tempDirName}`);
+          }
+        } catch (cleanupError) {
+          console.warn(`[8.2] 清理临时目录失败：`, cleanupError);
+        }
       },
     );
 
@@ -849,6 +916,32 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     schedulerInstance = null;
     broadcast("daemon:stopped", {});
     return c.json({ ok: true, running: false });
+  });
+
+  // --- Run Store for task management ---
+  const runStore = new RunStore();
+
+  app.get("/api/runs/active", (c) => {
+    const bookId = c.req.query("bookId");
+    if (bookId) {
+      const activeRun = runStore.findActiveRun(bookId);
+      return c.json({ active: !!activeRun, run: activeRun });
+    }
+    const allActive = runStore.list().filter(r => r.status === "running" || r.status === "queued");
+    return c.json({ active: allActive.length > 0, runs: allActive });
+  });
+
+  app.post("/api/runs/cancel", (c) => {
+    const bookId = c.req.query("bookId");
+    if (bookId) {
+      const cancelled = runStore.cancelActiveRun(bookId);
+      if (!cancelled) {
+        return c.json({ error: "No active run found for this book" }, 404);
+      }
+      broadcast("run:cancelled", { runId: cancelled.id, bookId });
+      return c.json({ ok: true, run: cancelled });
+    }
+    return c.json({ error: "bookId required" }, 400);
   });
 
   // --- Logs ---

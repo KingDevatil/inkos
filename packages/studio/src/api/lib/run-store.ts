@@ -116,6 +116,31 @@ export class RunStore {
     );
   }
 
+  cancel(runId: string): StudioRun | null {
+    const run = this.runs.get(runId);
+    if (!run) return null;
+    if (run.status !== "queued" && run.status !== "running") {
+      return null;
+    }
+    return this.update(
+      runId,
+      {
+        status: "failed",
+        stage: "Cancelled",
+        finishedAt: new Date().toISOString(),
+        error: "Task cancelled by user",
+      },
+      [{ type: "status", runId, status: "failed", error: "Task cancelled by user" }],
+      true,
+    );
+  }
+
+  cancelActiveRun(bookId: string): StudioRun | null {
+    const activeRun = this.findActiveRun(bookId);
+    if (!activeRun) return null;
+    return this.cancel(activeRun.id);
+  }
+
   subscribe(runId: string, subscriber: RunSubscriber): () => void {
     const current =
       this.subscribers.get(runId) ?? new Set<RunSubscriber>();
