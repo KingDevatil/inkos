@@ -1885,6 +1885,10 @@ export class PipelineRunner {
       }
 
       const stageLanguage = await this.resolveBookLanguage(book);
+      
+      // 记录修订开始
+      this.config.logger?.info(`[reviseDraft] 开始修订第${targetChapter}章，模式: ${mode}${brief ? '，有补充意图' : ''}`);
+      
       // Read the current audit issues from index
       this.logStage(stageLanguage, {
         zh: `加载第${targetChapter}章修订上下文`,
@@ -1897,10 +1901,16 @@ export class PipelineRunner {
       }
 
       // 索引记忆到RAG系统
+      this.config.logger?.info(`[reviseDraft] 索引记忆到RAG系统...`);
       await this.indexMemoryToRAG(bookId);
+      this.config.logger?.info(`[reviseDraft] RAG索引完成`);
       
       // Re-audit to get structured issues (index only stores strings)
+      this.config.logger?.info(`[reviseDraft] 读取第${targetChapter}章内容...`);
       const content = await this.readChapterContent(bookDir, targetChapter);
+      this.config.logger?.info(`[reviseDraft] 章节内容读取完成，字数: ${content.length}`);
+      
+      this.config.logger?.info(`[reviseDraft] 开始审计章节...`);
       const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
       const { profile: gp } = await this.loadGenreProfile(book.genre);
       const language = book.language ?? gp.language;
@@ -1914,6 +1924,8 @@ export class PipelineRunner {
           this.config.externalContext,
           { reuseExistingIntentWhenContextMissing: true },
         );
+      this.config.logger?.info(`[reviseDraft] 治理工件创建完成`);
+      
       const preRevision = await this.evaluateMergedAudit({
         auditor,
         book,
@@ -1929,6 +1941,7 @@ export class PipelineRunner {
             }
           : undefined,
       });
+      this.config.logger?.info(`[reviseDraft] 审计完成，发现问题: ${preRevision.auditResult.issues.length}，阻塞问题: ${preRevision.blockingCount}，AI痕迹: ${preRevision.aiTellCount}`);
 
       if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0) {
         return {
@@ -1955,10 +1968,13 @@ export class PipelineRunner {
         zh: `修订第${targetChapter}章`,
         en: `revising chapter ${targetChapter}`,
       });
+      this.config.logger?.info(`[reviseDraft] 开始调用ReviserAgent修订章节，模式: ${mode}...`);
       
       // 获取RAG管理器
       const ragManager = await this.getRAGManager(bookId);
+      this.config.logger?.info(`[reviseDraft] RAG管理器获取完成`);
       
+      this.config.logger?.info(`[reviseDraft] 调用reviseChapter...`);
       const reviseOutput = await reviser.reviseChapter(
         bookDir,
         content,
@@ -1981,16 +1997,22 @@ export class PipelineRunner {
               brief,
             },
       );
+      this.config.logger?.info(`[reviseDraft] reviseChapter完成，修订后字数: ${reviseOutput.revisedContent.length}，修复问题数: ${reviseOutput.fixedIssues.length}`);
 
       if (reviseOutput.revisedContent.length === 0) {
         throw new Error("Reviser returned empty content");
       }
+      
+      this.config.logger?.info(`[reviseDraft] 开始字数标准化检查...`);
       const normalizedRevision = await this.normalizeDraftLengthIfNeeded({
         bookId,
         chapterNumber: targetChapter,
         chapterContent: reviseOutput.revisedContent,
         lengthSpec,
       });
+      this.config.logger?.info(`[reviseDraft] 字数标准化完成，应用调整: ${normalizedRevision.applied}`);
+      
+      this.config.logger?.info(`[reviseDraft] 开始修订后审计...`);
       const postRevision = await this.evaluateMergedAudit({
         auditor,
         book,
@@ -2039,6 +2061,8 @@ export class PipelineRunner {
         lengthWarning: lengthWarnings.length > 0,
       });
 
+      this.config.logger?.info(`[reviseDraft] 修订后审计完成，阻塞问题: ${effectivePostRevision.blockingCount}，AI痕迹: ${effectivePostRevision.aiTellCount}`);
+
       const improvedBlocking = effectivePostRevision.blockingCount < preRevision.blockingCount;
       const improvedAITells = effectivePostRevision.aiTellCount < preRevision.aiTellCount;
       const blockingDidNotWorsen = effectivePostRevision.blockingCount <= preRevision.blockingCount;
@@ -2049,7 +2073,10 @@ export class PipelineRunner {
         && aiDidNotWorsen
         && (improvedBlocking || improvedAITells);
 
+      this.config.logger?.info(`[reviseDraft] 修订效果评估: 阻塞问题改善=${improvedBlocking}, AI痕迹改善=${improvedAITells}, 是否应用=${shouldApplyRevision}`);
+
       if (!shouldApplyRevision) {
+        this.config.logger?.info(`[reviseDraft] 修订未改善问题，保持原章节`);
         return {
           chapterNumber: targetChapter,
           wordCount: revisionBaseCount,
@@ -2066,6 +2093,7 @@ export class PipelineRunner {
         zh: `落盘第${targetChapter}章修订结果`,
         en: `persisting revision for chapter ${targetChapter}`,
       });
+      this.config.logger?.info(`[reviseDraft] 开始保存修订后的章节文件...`);
       const chaptersDir = join(bookDir, "chapters");
       const files = await readdir(chaptersDir);
       const paddedNum = String(targetChapter).padStart(4, "0");
@@ -2082,21 +2110,27 @@ export class PipelineRunner {
         `${reviseHeading}\n\n${normalizedRevision.content}`,
         "utf-8",
       );
+      this.config.logger?.info(`[reviseDraft] 章节文件保存完成: ${existingFile}`);
 
       // Update truth files
+      this.config.logger?.info(`[reviseDraft] 更新真相文件...`);
       const storyDir = join(bookDir, "story");
       if (reviseOutput.updatedState !== "(状态卡未更新)") {
         await writeFile(join(storyDir, "current_state.md"), reviseOutput.updatedState, "utf-8");
+        this.config.logger?.info(`[reviseDraft] 状态卡已更新`);
       }
       if (gp.numericalSystem && reviseOutput.updatedLedger && reviseOutput.updatedLedger !== "(账本未更新)") {
         await writeFile(join(storyDir, "particle_ledger.md"), reviseOutput.updatedLedger, "utf-8");
+        this.config.logger?.info(`[reviseDraft] 账本已更新`);
       }
       if (reviseOutput.updatedHooks !== "(伏笔池未更新)") {
         await writeFile(join(storyDir, "pending_hooks.md"), reviseOutput.updatedHooks, "utf-8");
+        this.config.logger?.info(`[reviseDraft] 伏笔池已更新`);
       }
       await this.syncLegacyStructuredStateFromMarkdown(bookDir, targetChapter);
 
       // Update index
+      this.config.logger?.info(`[reviseDraft] 更新章节索引...`);
       const updatedIndex = index.map((ch) =>
         ch.number === targetChapter
           ? {
@@ -2111,6 +2145,7 @@ export class PipelineRunner {
           : ch,
       );
       await this.state.saveChapterIndex(bookId, updatedIndex);
+      this.config.logger?.info(`[reviseDraft] 章节索引更新完成，状态: ${effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed"}`);
       const latestChapter = index.length > 0 ? Math.max(...index.map((chapter) => chapter.number)) : targetChapter;
       if (targetChapter === latestChapter) {
         await this.persistAuditDriftGuidance({
@@ -2128,14 +2163,20 @@ export class PipelineRunner {
         zh: `更新第${targetChapter}章索引与快照`,
         en: `updating chapter index and snapshots for chapter ${targetChapter}`,
       });
+      this.config.logger?.info(`[reviseDraft] 创建状态快照...`);
       await this.state.snapshotState(bookId, targetChapter);
+      this.config.logger?.info(`[reviseDraft] 同步叙事记忆索引...`);
       await this.syncNarrativeMemoryIndex(bookId);
+      this.config.logger?.info(`[reviseDraft] 同步当前状态事实历史...`);
       await this.syncCurrentStateFactHistory(bookId, targetChapter);
 
+      this.config.logger?.info(`[reviseDraft] 发送修订完成webhook...`);
       await this.emitWebhook("revision-complete", bookId, targetChapter, {
         wordCount: normalizedRevision.wordCount,
         fixedCount: reviseOutput.fixedIssues.length,
       });
+
+      this.config.logger?.info(`[reviseDraft] 修订完成！第${targetChapter}章，字数: ${normalizedRevision.wordCount}，修复问题: ${reviseOutput.fixedIssues.length}，状态: ${effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed"}`);
 
       return {
         chapterNumber: targetChapter,
@@ -2147,6 +2188,7 @@ export class PipelineRunner {
         lengthTelemetry,
       };
     } finally {
+      this.config.logger?.info(`[reviseDraft] 释放书籍锁`);
       await releaseLock();
     }
   }
