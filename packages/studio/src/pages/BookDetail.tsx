@@ -153,12 +153,14 @@ export function BookDetail({
   const [outlineBrief, setOutlineBrief] = useState("");
   const [outlineFileName, setOutlineFileName] = useState("");
   const [regeneratingOutline, setRegeneratingOutline] = useState(false);
-  
+  const [outlineRunId, setOutlineRunId] = useState<string | null>(null);
+
   // 卷纲重生成状态
   const [showVolumeOutlineRegenerate, setShowVolumeOutlineRegenerate] = useState(false);
   const [authorIntent, setAuthorIntent] = useState("");
   const [rewriteLevel, setRewriteLevel] = useState<"low" | "medium" | "high">("medium");
   const [regeneratingVolumeOutline, setRegeneratingVolumeOutline] = useState(false);
+  const [volumeOutlineRunId, setVolumeOutlineRunId] = useState<string | null>(null);
   const [generatedVolumeOutline, setGeneratedVolumeOutline] = useState("");
   const [showVolumeOutlinePreview, setShowVolumeOutlinePreview] = useState(false);
   const [volumePlans, setVolumePlans] = useState<any>(null);
@@ -355,8 +357,18 @@ export function BookDetail({
   useEffect(() => {
     const recentMessages = sse.messages.slice(-10);
     for (const message of recentMessages) {
-      const data = message.data as { bookId?: string; volumeId?: number; error?: string } | null;
-      
+      const data = message.data as { bookId?: string; volumeId?: number; error?: string; runId?: string } | null;
+
+      // 处理 run 完成事件
+      if (data?.runId) {
+        if (data.runId === outlineRunId) {
+          setOutlineRunId(null);
+        }
+        if (data.runId === volumeOutlineRunId) {
+          setVolumeOutlineRunId(null);
+        }
+      }
+
       // 处理分卷卷纲生成事件
       if (data?.bookId === bookId && data?.volumeId) {
         switch (message.event) {
@@ -373,7 +385,7 @@ export function BookDetail({
         }
       }
     }
-  }, [sse.messages, bookId]);
+  }, [sse.messages, bookId, outlineRunId, volumeOutlineRunId]);
 
   // 自动加载卷纲
   useEffect(() => {
@@ -552,10 +564,11 @@ export function BookDetail({
     }
     setRegeneratingOutline(true);
     try {
-      await postApi(`/books/${bookId}/regenerate-outline`, {
+      const response = await postApi(`/books/${bookId}/regenerate-outline`, {
         genre: outlineGenre,
         brief: outlineBrief || undefined,
       });
+      setOutlineRunId(response.runId);
       setShowOutlineRegenerate(false);
       setOutlineGenre("");
       setOutlineBrief("");
@@ -579,6 +592,7 @@ export function BookDetail({
         intent: authorIntent,
         rewriteLevel,
       });
+      setVolumeOutlineRunId(response.runId);
       setGeneratedVolumeOutline(response.volumeOutline);
       setShowVolumeOutlinePreview(true);
     } catch (e) {
