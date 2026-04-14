@@ -417,6 +417,7 @@ export class PipelineRunner {
     readonly passThreshold?: number;
     readonly dimensionFloor?: number;
   }): Promise<ArchitectOutput> {
+    this.config.logger?.info(`[generateAndReviewFoundation] passThreshold=${params.passThreshold}, dimensionFloor=${params.dimensionFloor}`);
     const maxRetries = params.maxRetries ?? 5; // 增加重试次数到5次
     let foundation = await params.generate();
     const previousReviews: Array<{ score: number; feedback: string }> = [];
@@ -1604,6 +1605,8 @@ ${historicalIssues}
     } catch (e) {
       this.config.logger?.warn(`[regenerateFoundation] Failed to load audit config: ${e instanceof Error ? e.message : String(e)}`);
     }
+
+    this.config.logger?.info(`[regenerateFoundation] Starting with passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}`);
 
     const foundation = await this.generateAndReviewFoundation({
       generate: (reviewFeedback) => architect.generateFoundation(
