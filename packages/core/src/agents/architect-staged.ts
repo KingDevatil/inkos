@@ -115,19 +115,6 @@ Please generate the following content:
 - DO NOT use emoji or special Unicode symbols for decoration
 - Keep the format clean and readable
 
-### Title Methodology
-- Keep the title clear, direct, and easy to understand
-- Use a format that immediately signals genre and core appeal
-- Avoid overly literary or misleading titles
-
-### Blurb Methodology (within 300 words, choose one):
-1. Open with conflict, then reveal the hook, then leave suspense
-2. Summarize only the main line and keep a clear suspense gap
-3. Use a miniature scene that captures the book's strongest pull
-
-Core blurb principle:
-- The blurb is product copy that must make readers want to click
-
 Notes:
 - Once the protagonist's name is determined, all subsequent content must use this name
 - The power system must be clear and consistent
@@ -159,23 +146,6 @@ ${reviewFeedback ? `\n【审核反馈】\n${reviewFeedback}\n` : ""}
 - 禁止使用ASCII艺术或制表符边框
 - 禁止使用emoji或特殊Unicode符号作为装饰
 - 保持格式简洁清晰
-
-### 书名方法论
-- 书名必须简单扼要、通俗易懂，读者看到书名就能知道题材和主题
-- 采用"题材+核心爽点+主角行为"的长书名格式，避免文艺化
-- 融入平台当下热点词汇，吸引精准流量
-- 禁止题材错位（都市文取玄幻书名会导致读者流失）
-- 参考热榜书名风格：俏皮、通俗、有记忆点
-
-### 简介方法论（300字内，三种写法任选其一）：
-1. 冲突开篇法：第一句抛困境/冲突，第二句亮金手指/核心能力，第三句留悬念
-2. 高度概括法：只挑主线概括（不是全篇概括），必须留悬念
-3. 小剧场法：提炼故事中最经典的桥段，作为引子
-
-简介核心原则：
-- 简介 = 产品宣传语，必须让读者产生"我要点开看"的冲动
-- 可以从剧情设定、人设、或某个精彩片段切入
-- 必须有噱头（如"凡是被写在笔记本上的名字，最后都得死"）
 
 注意：
 - 主角姓名一旦确定，后续所有内容必须使用此姓名
@@ -342,38 +312,51 @@ ${storyBible}
     const { profile: gp } = await readGenreProfile(this.ctx.projectRoot, book.genre);
     const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
 
-    const systemPrompt = `你是一个专业的网络小说架构师。你的任务是基于已有设定生成初始状态卡。
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web-fiction architect. Your task is to generate the initial state card based on established settings.
+
+【Established Core Settings】
+${storyBible}
+
+Generate initial state card (Chapter 0), include:
+| Field | Value |
+| --- | --- |
+| Current Chapter | 0 |
+| Current Location | (starting location) |
+| Protagonist State | (initial condition) |
+| Current Goal | (first goal) |
+| Current Constraint | (initial constraint) |
+| Current Alliances | (initial relationships) |
+| Current Conflict | (first conflict) |
+
+### Format Requirements (Strict)
+- Use simple Markdown table format only
+- DO NOT use decorative symbols like: ┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- DO NOT use ASCII art or box-drawing characters
+- DO NOT use emoji or special Unicode symbols for decoration
+- Keep the format clean and readable`
+      : `你是一个专业的网络小说架构师。你的任务是基于已有设定生成初始状态卡。
 
 【已确定的核心设定】
 ${storyBible}
 
-请生成以下内容（Markdown表格格式）：
-
+生成初始状态卡（第0章），包含：
 | 字段 | 值 |
 |------|-----|
 | 当前章节 | 0 |
-| 主角姓名 | （必须与故事圣经一致）|
-| 主角身份 | （必须与故事圣经一致）|
-| 初始状态 | （开书时的处境）|
-| 修为境界 | （必须与故事圣经一致）|
-| 能力/金手指 | （必须与故事圣经一致）|
-| 所属势力 | （必须与故事圣经一致）|
-| 师父 | （如有）|
-| 出身 | （必须与故事圣经一致）|
-| 起始地点 | （必须与故事圣经一致）|
-| 核心规则 | （当前面临的主要规则约束）|
-| 当前位面 | （世界名称）|
-| 力量体系 | （必须与故事圣经一致）|
-| 势力分布 | （必须与故事圣经一致）|
-| 当前目标 | （开书时的短期目标）|
-| 初始冲突 | （开书时的核心矛盾）|
-| 修炼路径 | （必须与故事圣经一致）|
-| 修炼资源 | （开书时的资源状况）|
-| 敌对势力 | （开书时的主要敌人）|
+| 当前位置 | (起始地点) |
+| 主角状态 | (初始状态) |
+| 当前目标 | (第一个目标) |
+| 当前限制 | (初始限制) |
+| 当前敌我 | (初始关系) |
+| 当前冲突 | (第一个冲突) |
 
-注意：
-- 所有字段必须与故事圣经完全一致
-- 主角姓名、修为、能力等关键信息不能有任何偏差`;
+### 格式要求（严格遵守）
+- 仅使用简单Markdown表格格式
+- 禁止使用装饰性符号如：┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- 禁止使用ASCII艺术或制表符边框
+- 禁止使用emoji或特殊Unicode符号作为装饰
+- 保持格式简洁清晰`;
 
     const userMessage = resolvedLanguage === "en"
       ? `Generate the current state card based on the story bible above.`
