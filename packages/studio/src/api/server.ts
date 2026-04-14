@@ -3747,6 +3747,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       booksDir: existsSync(join(root, "books")),
       llmConnected: false,
       bookCount: 0,
+      rag: {
+        enabled: false,
+        available: false,
+        embeddingModel: null as string | null,
+        configPath: null as string | null,
+      },
     };
 
     try {
@@ -3761,6 +3767,24 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       await chatCompletion(client, currentConfig.llm.model, [{ role: "user", content: "ping" }], { maxTokens: 5 });
       checks.llmConnected = true;
     } catch { /* ignore */ }
+
+    // Check RAG system status
+    try {
+      const projectConfig = await state.loadProjectConfig();
+      const vectorRetrieval = projectConfig?.vectorRetrieval as { enabled?: boolean; model?: { model?: string } } | undefined;
+      if (vectorRetrieval) {
+        checks.rag.enabled = vectorRetrieval.enabled ?? false;
+        checks.rag.embeddingModel = vectorRetrieval.model?.model ?? null;
+        checks.rag.configPath = join(root, "inkos.json");
+        
+        if (checks.rag.enabled) {
+          // Check if embedding API key is available
+          checks.rag.available = !!process.env.OPENAI_API_KEY || !!process.env.EMBEDDING_API_KEY;
+        }
+      }
+    } catch (error) {
+      checks.rag.available = false;
+    }
 
     return c.json(checks);
   });

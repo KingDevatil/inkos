@@ -747,15 +747,98 @@ ${historicalIssues}
     }
   }
 
-  private async indexBookFoundationToRAG(bookId: string): Promise<void> {
+  private async indexBookFoundationToRAG(
+    bookId: string,
+    bookDir?: string,
+    foundation?: ArchitectOutput
+  ): Promise<void> {
     try {
       const ragManager = await this.getRAGManager(bookId);
       if (!ragManager) return;
       
-      const bookDir = this.state.bookDir(bookId);
-      const storyDir = join(bookDir, "story");
+      const targetBookDir = bookDir || this.state.bookDir(bookId);
+      const storyDir = join(targetBookDir, "story");
       
-      // 读取基础设定文件
+      // 如果提供了 foundation，直接索引 foundation 内容
+      if (foundation) {
+        const { createDocumentProcessor } = await import("../rag/document-processor.js");
+        const documentProcessor = createDocumentProcessor();
+        
+        // 索引 story_bible
+        if (foundation.storyBible) {
+          const chunks = documentProcessor.processDocument(foundation.storyBible, {
+            fileName: "story_bible.md",
+            type: "foundation",
+            category: "story_bible",
+          });
+          const vectorStore = (ragManager as any).vectorStore;
+          if (vectorStore) {
+            await vectorStore.addChunks(chunks);
+          }
+          this.config.logger?.info(`Indexed story_bible for book ${bookId}`);
+        }
+        
+        // 索引 volume_outline
+        if (foundation.volumeOutline) {
+          const chunks = documentProcessor.processDocument(foundation.volumeOutline, {
+            fileName: "volume_outline.md",
+            type: "foundation",
+            category: "volume_outline",
+          });
+          const vectorStore = (ragManager as any).vectorStore;
+          if (vectorStore) {
+            await vectorStore.addChunks(chunks);
+          }
+          this.config.logger?.info(`Indexed volume_outline for book ${bookId}`);
+        }
+        
+        // 索引 book_rules
+        if (foundation.bookRules) {
+          const chunks = documentProcessor.processDocument(foundation.bookRules, {
+            fileName: "book_rules.md",
+            type: "foundation",
+            category: "book_rules",
+          });
+          const vectorStore = (ragManager as any).vectorStore;
+          if (vectorStore) {
+            await vectorStore.addChunks(chunks);
+          }
+          this.config.logger?.info(`Indexed book_rules for book ${bookId}`);
+        }
+        
+        // 索引 current_state
+        if (foundation.currentState) {
+          const chunks = documentProcessor.processDocument(foundation.currentState, {
+            fileName: "current_state.md",
+            type: "foundation",
+            category: "current_state",
+          });
+          const vectorStore = (ragManager as any).vectorStore;
+          if (vectorStore) {
+            await vectorStore.addChunks(chunks);
+          }
+          this.config.logger?.info(`Indexed current_state for book ${bookId}`);
+        }
+        
+        // 索引 pending_hooks
+        if (foundation.pendingHooks) {
+          const chunks = documentProcessor.processDocument(foundation.pendingHooks, {
+            fileName: "pending_hooks.md",
+            type: "foundation",
+            category: "pending_hooks",
+          });
+          const vectorStore = (ragManager as any).vectorStore;
+          if (vectorStore) {
+            await vectorStore.addChunks(chunks);
+          }
+          this.config.logger?.info(`Indexed pending_hooks for book ${bookId}`);
+        }
+        
+        this.config.logger?.info(`RAG foundation indexed for book ${bookId}`);
+        return;
+      }
+      
+      // 否则从文件读取（用于重写大纲后的索引）
       const foundationFiles = [
         "story_bible.md",
         "volume_outline.md",
@@ -942,6 +1025,10 @@ ${historicalIssues}
         gp.numericalSystem,
         book.language ?? gp.language,
       );
+
+      // 索引基础设定到RAG系统
+      this.logStage(stageLanguage, { zh: "索引基础设定到RAG系统", en: "indexing foundation to RAG system" });
+      await this.indexBookFoundationToRAG(book.id, stagingBookDir, foundation);
 
       this.logStage(stageLanguage, { zh: "初始化控制文档", en: "initializing control documents" });
       await this.state.ensureControlDocumentsAt(
@@ -1649,8 +1736,9 @@ ${historicalIssues}
     const currentChapter = chapterIndex.length > 0 ? chapterIndex[chapterIndex.length - 1].number : 0;
     await this.state.snapshotStateAt(bookDir, currentChapter);
     
-    // 索引基础设定文件到RAG系统
-    await this.indexBookFoundationToRAG(book.id);
+    // 索引基础设定到RAG系统
+    this.logStage(stageLanguage, { zh: "索引基础设定到RAG系统", en: "indexing foundation to RAG system" });
+    await this.indexBookFoundationToRAG(book.id, bookDir, foundation);
   }
 
   /** Import external source material and generate fanfic_canon.md */
@@ -1761,9 +1849,26 @@ ${historicalIssues}
         book.language ?? gp.language,
       );
 
-      const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
-      this.logStage(stageLanguage, { zh: "撰写章节草稿", en: "writing chapter draft" });
-      const output = await writer.writeChapter({
+      // 尝试使用RAG增强的Writer
+      const ragManager = await this.getRAGManager(bookId);
+      let output: WriteChapterOutput;
+      let writer: WriterAgent;
+      
+      if (ragManager && ragManager.isAvailable()) {
+        this.logStage(stageLanguage, { zh: "撰写章节草稿（RAG增强）", en: "writing chapter draft (RAG enhanced)" });
+        const { RAGWriterAgent } = await import("../agents/writer-rag.js");
+        writer = new RAGWriterAgent({
+          ctx: this.agentCtxFor("writer", bookId),
+          ragManager,
+          retrievalLimit: 5,
+          minScore: 0.5,
+        });
+      } else {
+        this.logStage(stageLanguage, { zh: "撰写章节草稿", en: "writing chapter draft" });
+        writer = new WriterAgent(this.agentCtxFor("writer", bookId));
+      }
+      
+      output = await writer.writeChapter({
         book,
         bookDir,
         chapterNumber,
@@ -1771,6 +1876,7 @@ ${historicalIssues}
         lengthSpec,
         ...(wordCount ? { wordCountOverride: wordCount } : {}),
       });
+      
       const writerCount = countChapterLength(output.content, lengthSpec.countingMode);
       let totalUsage: TokenUsageSummary = output.tokenUsage ?? {
         promptTokens: 0,
