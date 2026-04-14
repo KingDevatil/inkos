@@ -482,7 +482,7 @@ export function BookDetail({
 
   const handleFixChapterOrder = async () => {
     try {
-      await postApi(`/books/${bookId}/fix-order`, {});
+      await postApi(`/books/${bookId}/chapters/fix-order`, {});
       showAlertDialog("章节顺序已修复");
       refetch();
     } catch (e) {
