@@ -1285,18 +1285,29 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
       this.ctx.logger?.info(`[parseSections] Section "${name}": ${sectionContent.length} chars`);
     }
 
+    // Log filtered content preview for debugging
+    const filteredPreview = parseResult.filteredContent.slice(0, 500);
+    this.ctx.logger?.info(`[parseSections] Filtered content preview: ${filteredPreview}...`);
+
     const allSectionNames = ['story_bible', 'volume_outline', 'book_rules', 'current_state', 'pending_hooks'];
 
     const extract = (name: string): string => {
+      this.ctx.logger?.info(`[parseSections] Extracting section: ${name}`);
+      
       const section = cache.extractSection(parseResult, name, {
-        required: true,
+        required: false, // Don't throw here, handle it below for better error message
         validateBoundary: true,
         otherSections: allSectionNames.filter(n => n !== name),
       });
 
       if (!section) {
-        throw new Error(`Architect output missing required section: ${name}`);
+        // Log available sections for debugging
+        this.ctx.logger?.error(`[parseSections] Failed to extract "${name}". Available sections: ${Array.from(parseResult.sections.keys()).join(', ')}`);
+        this.ctx.logger?.error(`[parseSections] Raw content preview: ${content.slice(0, 1000)}...`);
+        throw new Error(`Architect output missing required section: ${name}. Available sections: ${Array.from(parseResult.sections.keys()).join(', ')}`);
       }
+
+      this.ctx.logger?.info(`[parseSections] Successfully extracted "${name}": ${section.length} chars`);
 
       if (name !== "pending_hooks") {
         return section;

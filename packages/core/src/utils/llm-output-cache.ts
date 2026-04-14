@@ -299,13 +299,10 @@ export class LlmOutputCache {
 
     for (const section of knownSections) {
       for (const pattern of section.patterns) {
-        const match = content.match(new RegExp(
-          `(?:^|\\n)\\s*(?:#{1,4}\\s*)?(?:SECTION\\s*[：:]\\s*)?${pattern.source}\\s*[：:]?\\s*\\n?([\\s\\S]*?)(?=(?:^|\\n)\\s*(?:#{1,4}\\s*)?(?:SECTION\\s*[：:]\\s*)?(?:story[_\s]bible|volume[_\s]outline|book[_\s]rules|current[_\s]state|pending[_\s]hooks|故事设定|卷纲|大纲|书籍规则|当前状态|初始伏笔)[：:]?|\\s*$)`,
-          'im'
-        ));
-
-        if (match && match[1] && match[1].trim().length > 10) {
-          sections.set(section.name, match[1].trim());
+        // Try multiple extraction strategies
+        const extracted = this.tryExtractSection(content, pattern, knownSections);
+        if (extracted) {
+          sections.set(section.name, extracted);
           break;
         }
       }
@@ -316,6 +313,54 @@ export class LlmOutputCache {
       rawContent: content,
       filteredContent: content,
     };
+  }
+
+  /**
+   * Try multiple strategies to extract a section
+   */
+  private tryExtractSection(
+    content: string,
+    pattern: RegExp,
+    allSections: Array<{ name: string; patterns: RegExp[] }>
+  ): string | null {
+    // Strategy 1: Look for section header followed by content until next section
+    const otherSectionNames = allSections
+      .flatMap(s => s.patterns.map(p => p.source))
+      .join('|');
+    
+    const regex1 = new RegExp(
+      `(?:^|\\n)\\s*(?:#{1,4}\\s*)?(?:SECTION\\s*[：:]\\s*)?${pattern.source}\\s*[：:]?\\s*\\n?([\\s\\S]*?)(?=(?:^|\\n)\\s*(?:#{1,4}\\s*)?(?:SECTION\\s*[：:]\\s*)?(?:${otherSectionNames})[：:]?|\\s*$)`,
+      'im'
+    );
+    
+    const match1 = content.match(regex1);
+    if (match1 && match1[1] && match1[1].trim().length > 10) {
+      return match1[1].trim();
+    }
+
+    // Strategy 2: Look for section with === delimiter
+    const regex2 = new RegExp(
+      `===\\s*SECTION\\s*[：:]?\\s*${pattern.source}\\s*===\\s*([\\s\\S]*?)(?=\\s*===|$)`,
+      'i'
+    );
+    
+    const match2 = content.match(regex2);
+    if (match2 && match2[1] && match2[1].trim().length > 10) {
+      return match2[1].trim();
+    }
+
+    // Strategy 3: Look for section with ## or ### header
+    const regex3 = new RegExp(
+      `##+\\s*${pattern.source}\\s*[：:]?\\s*\\n([\\s\\S]*?)(?=\\n##+|\\s*$)`,
+      'i'
+    );
+    
+    const match3 = content.match(regex3);
+    if (match3 && match3[1] && match3[1].trim().length > 10) {
+      return match3[1].trim();
+    }
+
+    return null;
   }
 
   /**
