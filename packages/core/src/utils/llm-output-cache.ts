@@ -249,15 +249,46 @@ ${lastContent.slice(-500)}
 
   /**
    * Find the length of overlapping content between end of a and start of b
+   * Uses multiple strategies to detect overlap with reduced false positives
    */
   private findOverlapLength(a: string, b: string): number {
-    const maxOverlap = Math.min(a.length, b.length, 500); // Max 500 chars to check
+    const maxOverlap = Math.min(a.length, b.length, 1000); // Max 1000 chars to check
+    const minOverlap = 30; // Minimum meaningful overlap (increased from 10)
 
-    for (let len = maxOverlap; len > 10; len--) {
+    // Strategy 1: Exact match for longer overlaps (most reliable)
+    for (let len = Math.min(maxOverlap, 200); len >= minOverlap; len--) {
       const endOfA = a.slice(-len);
       const startOfB = b.slice(0, len);
       if (endOfA === startOfB) {
-        return len;
+        // Verify: check if the match ends at a natural boundary
+        const nextChar = b[len];
+        if (!nextChar || nextChar === '\n' || nextChar === ' ' || nextChar === '.' || nextChar === '。') {
+          return len;
+        }
+      }
+    }
+
+    // Strategy 2: Line-based matching for structured content
+    const linesA = a.split('\n').slice(-10); // Last 10 lines
+    const linesB = b.split('\n').slice(0, 10); // First 10 lines
+    
+    for (let i = Math.min(linesA.length, linesB.length); i >= 2; i--) {
+      const endLinesA = linesA.slice(-i).join('\n');
+      const startLinesB = linesB.slice(0, i).join('\n');
+      if (endLinesA === startLinesB && endLinesA.length >= minOverlap) {
+        return endLinesA.length + (i - 1); // Account for newline characters
+      }
+    }
+
+    // Strategy 3: Paragraph-based fuzzy matching
+    const parasA = a.split(/\n\n+/).slice(-3); // Last 3 paragraphs
+    const parasB = b.split(/\n\n+/).slice(0, 3); // First 3 paragraphs
+    
+    for (let i = Math.min(parasA.length, parasB.length); i >= 1; i--) {
+      const endParasA = parasA.slice(-i).join('\n\n');
+      const startParasB = parasB.slice(0, i).join('\n\n');
+      if (endParasA === startParasB && endParasA.length >= minOverlap) {
+        return endParasA.length + (i - 1) * 2; // Account for paragraph separators
       }
     }
 
