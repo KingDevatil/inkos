@@ -406,19 +406,8 @@ ${ctx.storyBible}
 【Established Volume Outline】
 ${ctx.volumeOutline}
 
-Please generate the following content:
-
-1. Initial Hook Pool (Markdown table)
-   - hook_id: Hook ID (e.g., HK001)
-   - start_chapter: Number
-   - type: Item/Character/Rule/Faction/Resource/Identity/Conflict etc.
-   - status: pending
-   - last_advanced_chapter: 0 (book creation stage)
-   - expected_payoff: Chapter range (e.g., 15-20)
-   - payoff_timing: immediate/near-term/mid-arc/slow-burn/endgame
-   - notes: Detailed description
-
-2. Hook Payoff Priority Explanation
+Generate initial hook pool (Markdown table):
+| hook_id | start_chapter | type | status | last_advanced_chapter | expected_payoff | payoff_timing | notes |
 
 ### Format Requirements (Strict)
 - Use simple Markdown table format only
@@ -445,19 +434,8 @@ ${ctx.storyBible}
 【已确定的卷纲】
 ${ctx.volumeOutline}
 
-请生成以下内容：
-
-1. 初始伏笔池（Markdown表格）
-   - hook_id: 伏笔编号（如 HK001）
-   - 起始章节: 数字
-   - 类型: 物品/人物/规则/势力/资源/身份/冲突等
-   - 状态: 待激活
-   - 最近推进: 0（建书阶段）
-   - 预期回收: 章节范围（如 15-20章）
-   - 回收节奏: 立即/近期/中程/慢烧/终局
-   - 备注: 详细说明
-
-2. 伏笔回收优先级说明
+生成初始伏笔池（Markdown表格）：
+| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 回收节奏 | 备注 |
 
 ### 格式要求（严格遵守）
 - 仅使用简单Markdown表格格式
