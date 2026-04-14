@@ -581,7 +581,7 @@ export function BookDetail({
     }
     setRegeneratingOutline(true);
     try {
-      const response = await postApi(`/books/${bookId}/regenerate-outline`, {
+      const response = await postApi(`/books/${bookId}/regenerate-foundation`, {
         genre: outlineGenre,
         brief: outlineBrief || undefined,
       });

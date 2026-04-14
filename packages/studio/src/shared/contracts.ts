@@ -97,6 +97,7 @@ export type RunAction =
   | "revise"
   | "write-next"
   | "regenerate-outline"
+  | "regenerate-foundation"
   | "rewrite-volume-outline"
   | "generate-volume-detail"
   | "rewrite-volume-chapters";

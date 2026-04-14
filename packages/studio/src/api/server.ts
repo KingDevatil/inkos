@@ -3765,10 +3765,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json(checks);
   });
 
-  // --- Regenerate Outline ---
-  app.post("/api/books/:id/regenerate-outline", async (c) => {
+  // --- Regenerate Foundation (for book creation flow) ---
+  app.post("/api/books/:id/regenerate-foundation", async (c) => {
     const id = c.req.param("id");
-    const { genre, brief, intent, rewriteLevel } = await c.req.json<{ genre?: string; brief?: string; intent?: string; rewriteLevel?: string }>();
+    const { genre, brief, intent } = await c.req.json<{ genre?: string; brief?: string; intent?: string }>();
 
     // Support both genre-based and intent-based regeneration
     if (!genre && !intent) {
@@ -3778,11 +3778,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     // Create run record for task management
     const run = runStore.create({
       bookId: id,
-      action: "regenerate-outline",
+      action: "regenerate-foundation",
     });
-    runStore.markRunning(run.id, intent ? "重写卷纲" : "重新生成大纲");
+    runStore.markRunning(run.id, "重新生成基础设定");
 
-    broadcast("outline:regenerate:start", { bookId: id, genre, runId: run.id });
+    broadcast("foundation:regenerate:start", { bookId: id, genre, runId: run.id });
     try {
       const book = await state.loadBookConfig(id);
       const now = new Date().toISOString();
@@ -3799,12 +3799,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const result = await pipeline.regenerateFoundation(updatedBook, brief || intent);
 
       runStore.succeed(run.id, { bookId: id, result });
-      broadcast("outline:regenerate:complete", { bookId: id, runId: run.id });
+      broadcast("foundation:regenerate:complete", { bookId: id, runId: run.id });
       return c.json({ ok: true, bookId: id, runId: run.id, result });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       runStore.fail(run.id, error);
-      broadcast("outline:regenerate:error", { bookId: id, error, runId: run.id });
+      broadcast("foundation:regenerate:error", { bookId: id, error, runId: run.id });
       return c.json({ error, runId: run.id }, 500);
     }
   });
