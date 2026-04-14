@@ -20,7 +20,10 @@ export function parseCreativeOutput(
       `=== ${tag} ===\\s*([\\s\\S]*?)(?==== [A-Z_]+ ===|$)`,
     );
     const match = content.match(regex);
-    return match?.[1]?.trim() ?? "";
+    let result = match?.[1]?.trim() ?? "";
+    // Clean up any remaining === markers that might have been included
+    result = result.replace(/\s*===\s*$/, "").trim();
+    return result;
   };
 
   let chapterContent = extract("CHAPTER_CONTENT");
@@ -32,6 +35,8 @@ export function parseCreativeOutput(
   }
 
   let title = extract("CHAPTER_TITLE");
+  // Additional cleanup for title: remove any === markers and trim
+  title = title.replace(/===/g, "").trim();
   if (!title) {
     title = fallbackExtractTitle(content, chapterNumber, countingMode);
   }
@@ -134,14 +139,21 @@ export function parseWriterOutput(
       `=== ${tag} ===\\s*([\\s\\S]*?)(?==== [A-Z_]+ ===|$)`,
     );
     const match = content.match(regex);
-    return match?.[1]?.trim() ?? "";
+    let result = match?.[1]?.trim() ?? "";
+    // Clean up any remaining === markers that might have been included
+    result = result.replace(/\s*===\s*$/, "").trim();
+    return result;
   };
 
   const chapterContent = extract("CHAPTER_CONTENT");
+  
+  // Clean title: remove any === markers
+  let title = extract("CHAPTER_TITLE");
+  title = title.replace(/===/g, "").trim();
 
   return {
     chapterNumber,
-    title: extract("CHAPTER_TITLE") || defaultChapterTitle(chapterNumber, countingMode),
+    title: title || defaultChapterTitle(chapterNumber, countingMode),
     content: chapterContent,
     wordCount: countChapterLength(chapterContent, countingMode),
     preWriteCheck: extract("PRE_WRITE_CHECK"),
