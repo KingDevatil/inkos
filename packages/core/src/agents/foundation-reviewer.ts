@@ -172,8 +172,8 @@ Be strict. 80 means "ready to write without changes."`;
 
   private buildFoundationExcerpt(foundation: ArchitectOutput, language: "zh" | "en"): string {
     return language === "en"
-      ? `## Story Bible\n${foundation.storyBible.slice(0, 3000)}\n\n## Volume Outline\n${foundation.volumeOutline.slice(0, 3000)}\n\n## Book Rules\n${foundation.bookRules.slice(0, 1500)}\n\n## Initial State\n${foundation.currentState.slice(0, 1000)}\n\n## Initial Hooks\n${foundation.pendingHooks.slice(0, 1000)}`
-      : `## 世界设定\n${foundation.storyBible.slice(0, 3000)}\n\n## 卷纲\n${foundation.volumeOutline.slice(0, 3000)}\n\n## 规则\n${foundation.bookRules.slice(0, 1500)}\n\n## 初始状态\n${foundation.currentState.slice(0, 1000)}\n\n## 初始伏笔\n${foundation.pendingHooks.slice(0, 1000)}`;
+      ? `=== SECTION: story_bible ===\n${foundation.storyBible.slice(0, 3000)}\n\n=== SECTION: volume_outline ===\n${foundation.volumeOutline.slice(0, 3000)}\n\n=== SECTION: book_rules ===\n${foundation.bookRules.slice(0, 1500)}\n\n=== SECTION: current_state ===\n${foundation.currentState.slice(0, 1000)}\n\n=== SECTION: pending_hooks ===\n${foundation.pendingHooks.slice(0, 1000)}`
+      : `=== SECTION: story_bible ===\n${foundation.storyBible.slice(0, 3000)}\n\n=== SECTION: volume_outline ===\n${foundation.volumeOutline.slice(0, 3000)}\n\n=== SECTION: book_rules ===\n${foundation.bookRules.slice(0, 1500)}\n\n=== SECTION: current_state ===\n${foundation.currentState.slice(0, 1000)}\n\n=== SECTION: pending_hooks ===\n${foundation.pendingHooks.slice(0, 1000)}`;
   }
 
   private parseReviewResult(
