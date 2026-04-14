@@ -6,6 +6,7 @@ import { writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { renderHookSnapshot } from "../utils/memory-retrieval.js";
 import { buildCurrentStatePrompt, buildContinuationStatePrompt } from "../utils/state-dimensions.js";
+import { LlmOutputCache, type ParseResult } from "../utils/llm-output-cache.js";
 
 export interface ArchitectOutput {
   readonly storyBible: string;
@@ -274,11 +275,19 @@ ${finalRequirementsPrompt}`;
     const storyDir = join(bookDir, "story");
     await mkdir(storyDir, { recursive: true });
 
+    // Combine current_state with pending_hooks for comprehensive state tracking
+    // This ensures hooks are visible both in the state card and in the dedicated hooks file
+    const combinedCurrentState = this.combineStateWithHooks(
+      output.currentState,
+      output.pendingHooks,
+      language
+    );
+
     const writes: Array<Promise<void>> = [
       writeFile(join(storyDir, "story_bible.md"), output.storyBible, "utf-8"),
       writeFile(join(storyDir, "volume_outline.md"), output.volumeOutline, "utf-8"),
       writeFile(join(storyDir, "book_rules.md"), output.bookRules, "utf-8"),
-      writeFile(join(storyDir, "current_state.md"), output.currentState, "utf-8"),
+      writeFile(join(storyDir, "current_state.md"), combinedCurrentState, "utf-8"),
       writeFile(join(storyDir, "pending_hooks.md"), output.pendingHooks, "utf-8"),
     ];
 
@@ -1267,85 +1276,28 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
   }
 
   private parseSections(content: string): ArchitectOutput {
-    // Filter out <think> and <thinking> tags from LLM response
-    let filteredContent = content;
-    // Remove <think>...</think> tags (used by some LLM models)
-    const thinkRegex = /<think>[\s\S]*?<\/think>/gi;
-    filteredContent = filteredContent.replace(thinkRegex, "");
-    // Remove <thinking>...</thinking> tags (used by some LLM models)
-    const thinkingRegex = /<thinking>[\s\S]*?<\/thinking>/gi;
-    filteredContent = filteredContent.replace(thinkingRegex, "");
-    // Clean up any empty lines left after removal
-    filteredContent = filteredContent.replace(/\n{3,}/g, "\n\n").trim();
+    // Use the new LlmOutputCache for consistent filtering and parsing
+    const cache = new LlmOutputCache(this.ctx.projectRoot);
+    const parseResult = cache.parseSections(content);
 
-    const parsedSections = new Map<string, string>();
-    
-    // 改进的正则表达式，更灵活地匹配部分标记
-    const sectionPattern = /\s*===\s*SECTION\s*[：:]?\s*([^\n=]+?)\s*===\s*/gim;
-    const matches = [...filteredContent.matchAll(sectionPattern)];
-
-    for (let i = 0; i < matches.length; i++) {
-      const match = matches[i]!;
-      const rawName = match[1] ?? "";
-      const start = (match.index ?? 0) + match[0].length;
-      const end = matches[i + 1]?.index ?? content.length;
-      const normalizedName = this.normalizeSectionName(rawName);
-      parsedSections.set(normalizedName, content.slice(start, end).trim());
+    this.ctx.logger?.info(`[parseSections] Found ${parseResult.sections.size} sections`);
+    for (const [name, sectionContent] of parseResult.sections.entries()) {
+      this.ctx.logger?.info(`[parseSections] Section "${name}": ${sectionContent.length} chars`);
     }
 
+    const allSectionNames = ['story_bible', 'volume_outline', 'book_rules', 'current_state', 'pending_hooks'];
+
     const extract = (name: string): string => {
-      const normalizedName = this.normalizeSectionName(name);
-      let section = parsedSections.get(normalizedName);
-      
-      // 如果找不到精确匹配，尝试查找近似匹配
-      if (!section) {
-        for (const [key, value] of parsedSections.entries()) {
-          if (key.includes(normalizedName) || normalizedName.includes(key)) {
-            section = value;
-            break;
-          }
-        }
-      }
-      
-      // 如果仍然找不到，尝试从整个内容中提取
-      if (!section) {
-        if (name === "story_bible") {
-          // 尝试从内容中提取故事圣经部分
-          const storyBibleMatch = filteredContent.match(/(story[\s_]*bible[\s\S]*?)(?=\s*===|$)/i);
-          if (storyBibleMatch) {
-            section = storyBibleMatch[1].trim();
-          }
-        } else if (name === "volume_outline") {
-          // 尝试从内容中提取卷纲部分
-          const outlineMatch = filteredContent.match(/(volume[\s_]*outline[\s\S]*?)(?=\s*===|$)/i);
-          if (outlineMatch) {
-            section = outlineMatch[1].trim();
-          }
-        } else if (name === "book_rules") {
-          // 尝试从内容中提取书籍规则部分
-          const rulesMatch = filteredContent.match(/(book[\s_]*rules[\s\S]*?)(?=\s*===|$)/i);
-          if (rulesMatch) {
-            section = rulesMatch[1].trim();
-          }
-        } else if (name === "current_state") {
-          // 尝试从内容中提取当前状态部分
-          const stateMatch = filteredContent.match(/(current[\s_]*state[\s\S]*?)(?=\s*===|$)/i);
-          if (stateMatch) {
-            section = stateMatch[1].trim();
-          }
-        } else if (name === "pending_hooks") {
-          // 尝试从内容中提取伏笔部分
-          const hooksMatch = filteredContent.match(/(pending[\s_]*hooks[\s\S]*?)(?=\s*===|$)/i);
-          if (hooksMatch) {
-            section = hooksMatch[1].trim();
-          }
-        }
-      }
-      
+      const section = cache.extractSection(parseResult, name, {
+        required: true,
+        validateBoundary: true,
+        otherSections: allSectionNames.filter(n => n !== name),
+      });
+
       if (!section) {
         throw new Error(`Architect output missing required section: ${name}`);
       }
-      
+
       if (name !== "pending_hooks") {
         return section;
       }
@@ -1460,5 +1412,30 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
     } catch {
       return "";
     }
+  }
+
+  /**
+   * Combine current_state with pending_hooks for comprehensive state tracking.
+   * This ensures hooks are visible both in the state card and in the dedicated hooks file.
+   */
+  private combineStateWithHooks(
+    currentState: string,
+    pendingHooks: string,
+    language: "zh" | "en"
+  ): string {
+    // Check if current_state already contains hooks section
+    const hasHooksSection = /##\s*(初始伏笔|Pending Hooks|Hooks)/i.test(currentState);
+
+    if (hasHooksSection) {
+      // Current state already has hooks, return as-is
+      return currentState;
+    }
+
+    // Add hooks section to current_state
+    const hooksHeader = language === "en"
+      ? "\n\n## Pending Hooks\n\nInitial hooks planted at book creation:\n\n"
+      : "\n\n## 初始伏笔\n\n开书时埋下的初始伏笔：\n\n";
+
+    return currentState + hooksHeader + pendingHooks;
   }
 }

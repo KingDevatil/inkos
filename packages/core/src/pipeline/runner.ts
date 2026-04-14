@@ -417,13 +417,16 @@ export class PipelineRunner {
     readonly passThreshold?: number;
     readonly dimensionFloor?: number;
   }): Promise<ArchitectOutput> {
-    const maxRetries = params.maxRetries ?? 2;
+    const maxRetries = params.maxRetries ?? 5; // 增加重试次数到5次
     let foundation = await params.generate();
+    const previousReviews: Array<{ score: number; feedback: string }> = [];
+    let bestFoundation = foundation;
+    let bestScore = 0;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       this.logStage(params.stageLanguage, {
-        zh: `审核基础设定（第${attempt + 1}轮）`,
-        en: `reviewing foundation (round ${attempt + 1})`,
+        zh: `审核基础设定（第${attempt + 1}/${maxRetries}轮）`,
+        en: `reviewing foundation (round ${attempt + 1}/${maxRetries})`,
       });
 
       const review = await params.reviewer.review({
@@ -443,16 +446,30 @@ export class PipelineRunner {
         this.config.logger?.info(`  [${dim.score}] ${dim.name.slice(0, 40)}`);
       }
 
+      // 记录最佳结果
+      if (review.totalScore > bestScore) {
+        bestScore = review.totalScore;
+        bestFoundation = foundation;
+      }
+
       if (review.passed) {
         return foundation;
       }
+
+      // 记录历史审核结果
+      previousReviews.push({
+        score: review.totalScore,
+        feedback: this.buildFoundationReviewFeedback(review, params.language),
+      });
 
       this.logWarn(params.stageLanguage, {
         zh: `基础设定未通过审核（${review.totalScore}分），正在重新生成...`,
         en: `Foundation rejected (${review.totalScore}/100), regenerating...`,
       });
 
-      foundation = await params.generate(this.buildFoundationReviewFeedback(review, params.language));
+      // 构建累积反馈，包含历史问题
+      const cumulativeFeedback = this.buildCumulativeReviewFeedback(previousReviews, params.language);
+      foundation = await params.generate(cumulativeFeedback);
     }
 
     // Final review
@@ -469,7 +486,48 @@ export class PipelineRunner {
       `Foundation final review: ${finalReview.totalScore}/100 ${finalReview.passed ? "PASSED" : "ACCEPTED (max retries)"}`,
     );
 
+    // 如果最后一次不如之前的最佳结果，返回最佳结果
+    if (finalReview.totalScore < bestScore) {
+      this.config.logger?.info(`Using best foundation with score ${bestScore} instead of final ${finalReview.totalScore}`);
+      return bestFoundation;
+    }
+
     return foundation;
+  }
+
+  private buildCumulativeReviewFeedback(
+    previousReviews: Array<{ score: number; feedback: string }>,
+    language: "zh" | "en",
+  ): string {
+    if (previousReviews.length === 0) return "";
+
+    const latestFeedback = previousReviews[previousReviews.length - 1].feedback;
+    
+    if (previousReviews.length === 1) {
+      return latestFeedback;
+    }
+
+    // 提取历史低分维度，避免重复犯错
+    const historicalIssues = previousReviews
+      .slice(0, -1)
+      .map((r, i) => `\n--- 第${i + 1}轮（${r.score}分）---\n${r.feedback}`)
+      .join("\n");
+
+    if (language === "en") {
+      return `${latestFeedback}
+
+## Historical Review Notes (DO NOT repeat these mistakes)
+${historicalIssues}
+
+IMPORTANT: You have attempted ${previousReviews.length} times. Analyze the historical feedback above to identify PATTERNS in the problems. Fix the ROOT CAUSES, not just the symptoms. Focus on dimensions that consistently score low.`;
+    }
+
+    return `${latestFeedback}
+
+## 历史审核记录（不要重复这些错误）
+${historicalIssues}
+
+重要提示：你已经尝试了 ${previousReviews.length} 次。分析上述历史反馈，找出问题的规律。修复根本原因，而不仅是表面症状。重点关注持续低分的维度。`;
   }
 
   private buildFoundationReviewFeedback(
@@ -483,29 +541,78 @@ export class PipelineRunner {
     },
     language: "zh" | "en",
   ): string {
-    const dimensionLines = review.dimensions
-      .map((dimension) => (
-        language === "en"
-          ? `- ${dimension.name} [${dimension.score}]: ${dimension.feedback}`
-          : `- ${dimension.name}（${dimension.score}分）：${dimension.feedback}`
-      ))
+    // 按分数排序，低分优先
+    const sortedDimensions = [...review.dimensions].sort((a, b) => a.score - b.score);
+    
+    // 分离低分、中分、高分维度
+    const criticalIssues = sortedDimensions.filter(d => d.score < 40);
+    const warningIssues = sortedDimensions.filter(d => d.score >= 40 && d.score < 70);
+    const minorIssues = sortedDimensions.filter(d => d.score >= 70 && d.score < 100);
+
+    const dimensionLines = sortedDimensions
+      .map((dimension) => {
+        const scoreEmoji = dimension.score >= 80 ? "✅" : dimension.score >= 60 ? "⚠️" : "❌";
+        return language === "en"
+          ? `${scoreEmoji} ${dimension.name} [${dimension.score}]: ${dimension.feedback}`
+          : `${scoreEmoji} ${dimension.name}（${dimension.score}分）：${dimension.feedback}`;
+      })
       .join("\n");
 
-    return language === "en"
-      ? [
-          "## Overall Feedback",
-          review.overallFeedback,
-          "",
-          "## Dimension Notes",
-          dimensionLines || "- none",
-        ].join("\n")
-      : [
-          "## 总评",
-          review.overallFeedback,
-          "",
-          "## 分项问题",
-          dimensionLines || "- 无",
-        ].join("\n");
+    if (language === "en") {
+      const prioritySection = criticalIssues.length > 0
+        ? `## ⚠️ CRITICAL ISSUES (Must Fix First)\n${criticalIssues.map(d => `- ${d.name} [${d.score}]: ${d.feedback}`).join("\n")}\n\n`
+        : "";
+      const warningSection = warningIssues.length > 0
+        ? `## ⚡ WARNINGS (Should Fix)\n${warningIssues.map(d => `- ${d.name} [${d.score}]: ${d.feedback}`).join("\n")}\n\n`
+        : "";
+      const minorSection = minorIssues.length > 0
+        ? `## 💡 MINOR IMPROVEMENTS\n${minorIssues.map(d => `- ${d.name} [${d.score}]: ${d.feedback}`).join("\n")}\n\n`
+        : "";
+
+      return [
+        "## 📋 Previous Review Feedback",
+        "Your previous foundation was rejected. You MUST address these issues:",
+        "",
+        prioritySection,
+        warningSection,
+        minorSection,
+        "## 📊 All Dimensions",
+        dimensionLines,
+        "",
+        "## 🎯 Action Required",
+        "1. Fix ALL critical issues first",
+        "2. Address warnings",
+        "3. Improve minor points",
+        "4. Do NOT simply rephrase the same content - make substantive changes",
+      ].join("\n");
+    }
+
+    const prioritySection = criticalIssues.length > 0
+      ? `## ⚠️ 严重问题（必须优先修复）\n${criticalIssues.map(d => `- ${d.name}（${d.score}分）：${d.feedback}`).join("\n")}\n\n`
+      : "";
+    const warningSection = warningIssues.length > 0
+      ? `## ⚡ 警告问题（需要修复）\n${warningIssues.map(d => `- ${d.name}（${d.score}分）：${d.feedback}`).join("\n")}\n\n`
+      : "";
+    const minorSection = minorIssues.length > 0
+      ? `## 💡 轻微改进\n${minorIssues.map(d => `- ${d.name}（${d.score}分）：${d.feedback}`).join("\n")}\n\n`
+      : "";
+
+    return [
+      "## 📋 上一轮审核反馈",
+      "你的上一版基础设定未通过审核。你必须在这次重写中明确修复以下问题：",
+      "",
+      prioritySection,
+      warningSection,
+      minorSection,
+      "## 📊 所有维度评分",
+      dimensionLines,
+      "",
+      "## 🎯 具体要求",
+      "1. 优先修复所有严重问题",
+      "2. 解决警告问题",
+      "3. 改进轻微问题",
+      "4. 不要只是换措辞重写同一套方案，必须做出实质性改变",
+    ].join("\n");
   }
 
   private agentCtx(bookId?: string): AgentContext {
