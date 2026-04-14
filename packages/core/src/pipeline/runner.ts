@@ -6,6 +6,7 @@ import type { ChapterMeta } from "../models/chapter.js";
 import type { NotifyChannel, LLMConfig, AgentLLMOverride, InputGovernanceMode } from "../models/project.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import { ArchitectAgent, type ArchitectOutput } from "../agents/architect.js";
+import { StagedArchitectAgent } from "../agents/architect-staged.js";
 import { FoundationReviewerAgent } from "../agents/foundation-reviewer.js";
 import { PlannerAgent, type PlanChapterOutput } from "../agents/planner.js";
 import { ComposerAgent } from "../agents/composer.js";
@@ -914,8 +915,11 @@ ${historicalIssues}
       this.config.logger?.debug(`Failed to load audit config: ${e instanceof Error ? e.message : String(e)}`);
     }
     
+    // Use staged generation for better consistency
+    const stagedArchitect = new StagedArchitectAgent(this.agentCtxFor("architect", book.id));
+    
     const foundation = await this.generateAndReviewFoundation({
-      generate: (reviewFeedback) => architect.generateFoundation(
+      generate: (reviewFeedback) => stagedArchitect.generateFoundationStaged(
         book,
         this.config.externalContext,
         reviewFeedback,
@@ -1608,8 +1612,11 @@ ${historicalIssues}
 
     this.config.logger?.info(`[regenerateFoundation] Starting with passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}`);
 
+    // Use staged generation for better consistency
+    const stagedArchitect = new StagedArchitectAgent(this.agentCtxFor("architect", book.id));
+
     const foundation = await this.generateAndReviewFoundation({
-      generate: (reviewFeedback) => architect.generateFoundation(
+      generate: (reviewFeedback) => stagedArchitect.generateFoundationStaged(
         book,
         externalContext ?? this.config.externalContext,
         reviewFeedback,
