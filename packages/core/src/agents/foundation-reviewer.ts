@@ -55,7 +55,7 @@ export class FoundationReviewerAgent extends BaseAgent {
     const passThreshold = params.passThreshold ?? DEFAULT_PASS_THRESHOLD;
     const dimensionFloor = params.dimensionFloor ?? DEFAULT_DIMENSION_FLOOR;
 
-    return this.parseReviewResult(response.content, dimensions, passThreshold, dimensionFloor);
+    return this.parseReviewResult(response.content, dimensions, passThreshold, dimensionFloor, params.language);
   }
 
   private originalDimensions(language: "zh" | "en"): ReadonlyArray<string> {
@@ -181,6 +181,7 @@ Be strict. 80 means "ready to write without changes."`;
     dimensions: ReadonlyArray<string>,
     passThreshold: number,
     dimensionFloor: number,
+    language: "zh" | "en",
   ): FoundationReviewResult {
     const parsedDimensions: Array<{ readonly name: string; readonly score: number; readonly feedback: string }> = [];
 
@@ -248,6 +249,16 @@ Be strict. 80 means "ready to write without changes."`;
         score,
         feedback,
       });
+    }
+
+    // Check if parsing failed for all dimensions
+    const failedDimensions = parsedDimensions.filter(d => d.feedback === "(parse failed)");
+    if (failedDimensions.length === parsedDimensions.length && parsedDimensions.length > 0) {
+      // All dimensions failed to parse - this is a parsing error, not a review rejection
+      const errorMessage = language === "en"
+        ? `Foundation review parsing failed. AI response format does not match expected format.\n\nRaw response (first 2000 chars):\n${content.slice(0, 2000)}`
+        : `基础设定审核解析失败。AI返回的格式不符合预期格式。\n\n原始响应（前2000字符）：\n${content.slice(0, 2000)}`;
+      throw new Error(errorMessage);
     }
 
     const totalScore = parsedDimensions.length > 0
