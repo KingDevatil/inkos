@@ -112,8 +112,12 @@ export interface ChatWithToolsResult {
 // === Factory ===
 
 export function createLLMClient(config: LLMConfig): LLMClient {
+  // 检测是否为 MiniMax 模型并应用默认 temperature
+  const modelName = config.model ?? "";
+  const miniMaxDefaultTemp = getMiniMaxDefaultTemperature(modelName);
+
   const defaults = {
-    temperature: config.temperature ?? 0.7,
+    temperature: config.temperature ?? miniMaxDefaultTemp ?? 0.7,
     maxTokens: config.maxTokens ?? 8192,
     maxTokensCap: config.maxTokens ?? null, // only cap when user explicitly set maxTokens
     thinkingBudget: config.thinkingBudget ?? 0,
@@ -225,6 +229,47 @@ export function __resetFixedTemperatureWarnings(): void {
   warnedFixedTemperatureModels.clear();
 }
 
+// === MiniMax Temperature Range Clamp ===
+//
+// MiniMax-M2.7 和 MiniMax-M2.5 模型的 temperature 范围限制为 [0, 1.0]，
+// 超出此范围会被 API 拒绝。同时这些模型具有思考能力，默认使用 temperature=1.0
+// 可以充分利用其推理能力。
+
+function isMiniMaxModel(model: string): boolean {
+  const lower = model.toLowerCase();
+  return lower.includes("minimax");
+}
+
+const warnedMiniMaxModels = new Set<string>();
+
+function clampTemperatureForMiniMax(model: string, requested: number): number {
+  if (!isMiniMaxModel(model)) return requested;
+
+  // MiniMax 温度范围 [0, 1.0]
+  const clamped = Math.max(0, Math.min(1.0, requested));
+
+  if (clamped !== requested && !warnedMiniMaxModels.has(model)) {
+    warnedMiniMaxModels.add(model);
+    console.warn(
+      `[inkos] 模型 "${model}" 是 MiniMax 模型，temperature 已限制在 [0, 1.0] 范围内（原请求值 ${requested}，调整后 ${clamped}）`,
+    );
+  }
+
+  return clamped;
+}
+
+// 获取 MiniMax 模型的默认 temperature
+function getMiniMaxDefaultTemperature(model: string): number | null {
+  if (!isMiniMaxModel(model)) return null;
+  // MiniMax 思考模型默认使用 1.0 以充分利用推理能力
+  return 1.0;
+}
+
+// 仅测试用：清空 MiniMax warning 去重集合。
+export function __resetMiniMaxTemperatureWarnings(): void {
+  warnedMiniMaxModels.clear();
+}
+
 // === Error Wrapping ===
 
 function wrapLLMError(error: unknown, context?: { readonly baseUrl?: string; readonly model?: string }): Error {
@@ -306,9 +351,12 @@ export async function chatCompletion(
   const perCallMax = options?.maxTokens ?? client.defaults.maxTokens;
   const cap = client.defaults.maxTokensCap;
   const resolved = {
-    temperature: clampTemperatureForModel(
+    temperature: clampTemperatureForMiniMax(
       model,
-      options?.temperature ?? client.defaults.temperature,
+      clampTemperatureForModel(
+        model,
+        options?.temperature ?? client.defaults.temperature,
+      ),
     ),
     maxTokens: cap !== null ? Math.min(perCallMax, cap) : perCallMax,
     extra: client.defaults.extra,
@@ -405,9 +453,12 @@ export async function chatWithTools(
 ): Promise<ChatWithToolsResult> {
   try {
     const resolved = {
-      temperature: clampTemperatureForModel(
+      temperature: clampTemperatureForMiniMax(
         model,
-        options?.temperature ?? client.defaults.temperature,
+        clampTemperatureForModel(
+          model,
+          options?.temperature ?? client.defaults.temperature,
+        ),
       ),
       maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
     };
