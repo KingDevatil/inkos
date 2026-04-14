@@ -1576,6 +1576,35 @@ ${historicalIssues}
     const { profile: gp } = await this.loadGenreProfile(book.genre);
     const reviewer = new FoundationReviewerAgent(this.agentCtxFor("foundation-reviewer", book.id));
     const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" as const : "zh" as const;
+
+    // 加载审计配置
+    let passThreshold = 80;
+    let dimensionFloor = 60;
+    try {
+      const auditConfig = await this.state.loadAuditConfig(book.id);
+      if (auditConfig) {
+        const config = auditConfig as any;
+        if (config.foundationReview && typeof config.foundationReview === 'object') {
+          if (config.foundationReview.passThreshold !== undefined) {
+            passThreshold = config.foundationReview.passThreshold;
+          } else if (config.foundationReview.minScore !== undefined) {
+            passThreshold = config.foundationReview.minScore;
+          }
+          if (config.foundationReview.dimensionFloor !== undefined) {
+            dimensionFloor = config.foundationReview.dimensionFloor;
+          } else if (config.foundationReview.minDimensionScore !== undefined) {
+            dimensionFloor = config.foundationReview.minDimensionScore;
+          }
+        } else if (config.passCriteria && typeof config.passCriteria === 'object') {
+          passThreshold = config.passCriteria.foundationReview?.minScore ?? 80;
+          dimensionFloor = config.passCriteria.foundationReview?.minDimensionScore ?? 60;
+        }
+        this.config.logger?.info(`[regenerateFoundation] Using custom audit config: passThreshold=${passThreshold}, dimensionFloor=${dimensionFloor}`);
+      }
+    } catch (e) {
+      this.config.logger?.warn(`[regenerateFoundation] Failed to load audit config: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     const foundation = await this.generateAndReviewFoundation({
       generate: (reviewFeedback) => architect.generateFoundation(
         book,
@@ -1586,6 +1615,8 @@ ${historicalIssues}
       mode: "original",
       language: resolvedLanguage,
       stageLanguage,
+      passThreshold,
+      dimensionFloor,
     });
 
     this.logStage(stageLanguage, { zh: "更新基础设定文件", en: "updating foundation files" });
