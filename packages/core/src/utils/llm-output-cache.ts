@@ -132,9 +132,106 @@ export class LlmOutputCache {
   }
 
   /**
+   * Check if content is truncated (incomplete)
+   * Returns true if content appears to be cut off
+   */
+  isContentTruncated(content: string): boolean {
+    // Check for unclosed XML/HTML tags
+    const unclosedTagPattern = /<[^>]+\b[^>]*>[^<]*$/;
+    if (unclosedTagPattern.test(content)) {
+      return true;
+    }
+
+    // Check for unclosed markdown code blocks
+    const codeBlockMatches = content.match(/```/g);
+    if (codeBlockMatches && codeBlockMatches.length % 2 !== 0) {
+      return true;
+    }
+
+    // Check for incomplete sentences (ending without proper punctuation)
+    const trimmed = content.trim();
+    const lastChar = trimmed.slice(-1);
+    const incompleteEndings = ['', ',', ';', ':', '-', '—', '…'];
+    if (incompleteEndings.includes(lastChar)) {
+      // Check if it's actually incomplete or just ends with a list/item
+      const lastLine = trimmed.split('\n').pop() || '';
+      if (!lastLine.match(/^[\s\-*\d]/) && !lastLine.match(/\|\s*$/)) {
+        return true;
+      }
+    }
+
+    // Check for unclosed parentheses, brackets, quotes
+    const openParens = (content.match(/\(/g) || []).length;
+    const closeParens = (content.match(/\)/g) || []).length;
+    if (openParens !== closeParens) return true;
+
+    const openBrackets = (content.match(/\[/g) || []).length;
+    const closeBrackets = (content.match(/\]/g) || []).length;
+    if (openBrackets !== closeBrackets) return true;
+
+    const openBraces = (content.match(/\{/g) || []).length;
+    const closeBraces = (content.match(/\}/g) || []).length;
+    if (openBraces !== closeBraces) return true;
+
+    // Check for unclosed quotes (simplified)
+    const doubleQuotes = (content.match(/"/g) || []).length;
+    if (doubleQuotes % 2 !== 0) return true;
+
+    // Check if content ends mid-word (no space or punctuation at end)
+    if (/\w$/.test(trimmed) && !trimmed.endsWith('...')) {
+      // Check last few characters
+      const lastFew = trimmed.slice(-20);
+      if (!lastFew.match(/[.!?。！？…]\s*$/)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Get the last part index from cache
+   */
+  async getLastPartIndex(): Promise<number> {
+    if (!existsSync(this.cacheDir)) {
+      return -1;
+    }
+
+    const { readdir } = await import("fs/promises");
+    const files = await readdir(this.cacheDir);
+    const partFiles = files.filter(f => f.startsWith("part-") && f.endsWith(".md"));
+
+    if (partFiles.length === 0) {
+      return -1;
+    }
+
+    // Extract indices and find max
+    const indices = partFiles.map(f => {
+      const match = f.match(/part-(\d+)/);
+      return match ? parseInt(match[1], 10) : -1;
+    });
+
+    return Math.max(...indices);
+  }
+
+  /**
+   * Get continuation prompt for resuming generation
+   */
+  getContinuationPrompt(originalPrompt: string, lastContent: string): string {
+    return `${originalPrompt}
+
+[继续生成 - 从以下内容接着完成，不要重复已生成的内容]
+
+已生成内容的最后部分：
+${lastContent.slice(-500)}
+
+请继续完成剩余内容。`;
+  }
+
+  /**
    * Merge two content pieces, removing duplicate overlap
    */
-  private mergeWithDeduplication(existing: string, newContent: string): string {
+  mergeWithDeduplication(existing: string, newContent: string): string {
     if (!existing) {
       return newContent;
     }

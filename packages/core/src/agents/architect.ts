@@ -258,18 +258,56 @@ ${finalRequirementsPrompt}`;
       ? `Generate the complete foundation for a ${gp.name} novel titled "${book.title}". Write everything in English.`
       : `请为标题为"${book.title}"的${gp.name}小说生成完整基础设定。`;
 
-    const response = await this.chat([
-      { role: "system", content: langPrefix + systemPrompt },
-      { role: "user", content: userMessage },
-    ], { maxTokens: 16384, temperature: 0.8 });
-
-    // Save LLM output to temporary file for debugging
+    // Initialize cache for storing LLM outputs
     const cache = new LlmOutputCache(this.ctx.projectRoot);
     await cache.initialize();
-    const tempFilePath = await cache.savePart(response.content, 0);
-    this.ctx.logger?.info(`[generateFoundation] LLM output saved to: ${tempFilePath}`);
 
-    return this.parseSections(response.content);
+    // Generate content with auto-continuation support
+    let partIndex = 0;
+    let fullContent = "";
+    const maxContinuations = 3; // Maximum number of continuation attempts
+
+    while (partIndex <= maxContinuations) {
+      this.ctx.logger?.info(`[generateFoundation] Generating part ${partIndex + 1}/${maxContinuations + 1}`);
+
+      // Prepare prompt for this iteration
+      let currentPrompt = userMessage;
+      if (partIndex > 0 && fullContent) {
+        currentPrompt = cache.getContinuationPrompt(userMessage, fullContent);
+      }
+
+      // Call LLM
+      const response = await this.chat([
+        { role: "system", content: langPrefix + systemPrompt },
+        { role: "user", content: currentPrompt },
+      ], { maxTokens: 16384, temperature: 0.8 });
+
+      // Save to cache
+      const tempFilePath = await cache.savePart(response.content, partIndex);
+      this.ctx.logger?.info(`[generateFoundation] Part ${partIndex} saved to: ${tempFilePath}`);
+
+      // Merge with existing content
+      fullContent = cache.mergeWithDeduplication(fullContent, response.content);
+
+      // Check if content is complete
+      if (!cache.isContentTruncated(fullContent)) {
+        this.ctx.logger?.info(`[generateFoundation] Content appears complete after ${partIndex + 1} parts`);
+        break;
+      }
+
+      this.ctx.logger?.info(`[generateFoundation] Content appears truncated, requesting continuation...`);
+      partIndex++;
+
+      if (partIndex > maxContinuations) {
+        this.ctx.logger?.warn(`[generateFoundation] Reached max continuation attempts (${maxContinuations}), proceeding with incomplete content`);
+      }
+    }
+
+    // Read all parts and merge (ensures proper deduplication)
+    const mergedContent = await cache.readAllParts();
+    this.ctx.logger?.info(`[generateFoundation] Total merged content: ${mergedContent.length} chars`);
+
+    return this.parseSections(mergedContent || fullContent);
   }
 
   async writeFoundationFiles(
