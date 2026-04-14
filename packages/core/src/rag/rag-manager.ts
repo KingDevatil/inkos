@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { VectorRetrievalConfig } from "../vector/types.js";
+import type { VectorRetrievalConfig, VectorModelType } from "../vector/types.js";
 import { createEmbeddingClient } from "../vector/embedding-client.js";
 import { createEnhancedVectorStore, EnhancedVectorStore } from "./enhanced-vector-store.js";
 import { createDocumentProcessor } from "./document-processor.js";
@@ -265,4 +265,30 @@ export async function createRAGManager(options: RAGManagerOptions): Promise<RAGM
   const manager = new RAGManager(options);
   await manager.initialize();
   return manager;
+}
+
+/**
+ * 从环境变量创建 RAG 配置
+ */
+export function createRAGConfigFromEnv(): VectorRetrievalConfig | null {
+  const enabled = process.env.RAG_ENABLED === "true";
+  if (!enabled) {
+    return null;
+  }
+
+  const modelType = (process.env.RAG_MODEL_TYPE || "openai") as VectorModelType;
+  const modelName = process.env.RAG_MODEL_NAME || "text-embedding-3-small";
+  const baseUrl = process.env.RAG_BASE_URL;
+
+  return {
+    enabled: true,
+    model: {
+      type: modelType,
+      model: modelName,
+      ...(baseUrl ? { baseUrl } : {}),
+    },
+    topK: parseInt(process.env.RAG_TOP_K || "10", 10),
+    minScore: parseFloat(process.env.RAG_MIN_SCORE || "0.5"),
+    storePath: process.env.RAG_STORE_PATH,
+  };
 }

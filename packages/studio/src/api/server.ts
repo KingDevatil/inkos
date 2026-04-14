@@ -15,6 +15,8 @@ import {
   type LogSink,
   type LogEntry,
   type ChapterMeta,
+  type VectorRetrievalConfig,
+  type VectorModelType,
 } from "@actalk/inkos-core";
 import { access, readFile, writeFile, readdir, unlink, rename, mkdir, stat, rm } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
@@ -967,7 +969,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       broadcast("run:cancelled", { runId: cancelled.id, bookId });
       return c.json({ ok: true, run: cancelled });
     }
-    return c.json({ error: "bookId required" }, 400);
+    // Cancel all active runs if no bookId provided
+    const activeRuns = runStore.list().filter(r => r.status === "running" || r.status === "queued");
+    if (activeRuns.length === 0) {
+      return c.json({ error: "No active runs found" }, 404);
+    }
+    const cancelledRuns = [];
+    for (const run of activeRuns) {
+      const cancelled = runStore.cancelActiveRun(run.bookId);
+      if (cancelled) {
+        cancelledRuns.push(cancelled);
+        broadcast("run:cancelled", { runId: cancelled.id, bookId: run.bookId });
+      }
+    }
+    return c.json({ ok: true, runs: cancelledRuns });
   });
 
   // --- Logs ---
@@ -1632,6 +1647,221 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const { writeFile: writeFileFs } = await import("node:fs/promises");
     await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
     return c.json({ ok: true });
+  });
+
+  // --- RAG Status & Supplement ---
+
+  // 获取书籍RAG状态
+  app.get("/api/books/:id/rag-status", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const { createRAGStatusManager } = await import("@actalk/inkos-core");
+      const bookDir = state.bookDir(id);
+      const statusManager = await createRAGStatusManager(bookDir, id);
+      const status = await statusManager.load();
+      
+      // 获取章节列表
+      const chapters = await state.loadChapterIndex(id);
+      const chapterNumbers = chapters.map(ch => ch.number);
+      
+      // 检查状态
+      const checkResult = await statusManager.checkStatus(chapterNumbers);
+      
+      return c.json({
+        status,
+        check: checkResult,
+      });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // 检测并补充RAG索引
+  app.post("/api/books/:id/rag-supplement", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ forceReindex?: boolean }>().catch(() => ({ forceReindex: false }));
+    
+    broadcast("rag:supplement:start", { bookId: id });
+    
+    try {
+      const { createRAGStatusManager, createRAGManager, createRAGIndexer } = await import("@actalk/inkos-core");
+      const bookDir = state.bookDir(id);
+      const chapters = await state.loadChapterIndex(id);
+      const chapterNumbers = chapters.map(ch => ch.number);
+      
+      // 初始化RAG管理器
+      const projectConfig = await loadCurrentProjectConfig();
+      const vectorRetrievalConfig = (projectConfig as unknown as { vectorRetrieval?: { enabled?: boolean } }).vectorRetrieval;
+      
+      if (!vectorRetrievalConfig?.enabled) {
+        return c.json({ error: "RAG is not enabled in project config" }, 400);
+      }
+      
+      const ragManager = await createRAGManager({
+        bookDir,
+        config: vectorRetrievalConfig as VectorRetrievalConfig,
+      });
+      
+      if (!ragManager.isAvailable()) {
+        return c.json({ error: "RAG manager is not available" }, 500);
+      }
+      
+      const statusManager = await createRAGStatusManager(bookDir, id);
+      const indexer = createRAGIndexer(ragManager, statusManager);
+      
+      // 检查结果
+      const checkResult = await statusManager.checkStatus(chapterNumbers);
+      
+      // 补充缺失的章节
+      const missingChapters = checkResult.chapters.filter(c => c.status === "missing");
+      const results: Array<{ chapter: number; success: boolean; error?: string }> = [];
+      
+      if (missingChapters.length > 0 || body.forceReindex) {
+        const targetChapters = body.forceReindex ? chapterNumbers : missingChapters.map(c => c.chapter);
+        
+        for (let i = 0; i < targetChapters.length; i++) {
+          const chapter = targetChapters[i];
+          broadcast("rag:supplement:progress", { 
+            bookId: id, 
+            current: i + 1, 
+            total: targetChapters.length, 
+            chapter 
+          });
+          
+          try {
+            const chapterPath = join(bookDir, "chapters", `chapter_${String(chapter).padStart(3, "0")}.md`);
+            const content = await readFile(chapterPath, "utf-8");
+            await indexer.indexChapter(chapter, content, { chapter });
+            results.push({ chapter, success: true });
+          } catch (error) {
+            results.push({ 
+              chapter, 
+              success: false, 
+              error: error instanceof Error ? error.message : String(error) 
+            });
+          }
+        }
+      }
+      
+      broadcast("rag:supplement:complete", { 
+        bookId: id, 
+        checked: checkResult.summary.total,
+        missing: checkResult.summary.missing,
+        indexed: results.filter(r => r.success).length,
+        failed: results.filter(r => !r.success).length,
+      });
+      
+      return c.json({
+        ok: true,
+        checked: checkResult.summary.total,
+        foundationStatus: checkResult.foundationStatus,
+        summary: checkResult.summary,
+        results,
+      });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("rag:supplement:error", { bookId: id, error });
+      return c.json({ error }, 500);
+    }
+  });
+
+  // 重建RAG索引（清空后重新索引）
+  app.post("/api/books/:id/rag-rebuild", async (c) => {
+    const id = c.req.param("id");
+    
+    broadcast("rag:rebuild:start", { bookId: id });
+    
+    try {
+      const { createRAGStatusManager, createRAGManager, createRAGIndexer, createDocumentProcessor } = await import("@actalk/inkos-core");
+      const bookDir = state.bookDir(id);
+      const chapters = await state.loadChapterIndex(id);
+      const chapterNumbers = chapters.map(ch => ch.number);
+      
+      // 初始化RAG管理器
+      const projectConfig = await loadCurrentProjectConfig();
+      const vectorRetrievalConfig = (projectConfig as unknown as { vectorRetrieval?: { enabled?: boolean } }).vectorRetrieval;
+      
+      if (!vectorRetrievalConfig?.enabled) {
+        return c.json({ error: "RAG is not enabled in project config" }, 400);
+      }
+      
+      const ragManager = await createRAGManager({
+        bookDir,
+        config: vectorRetrievalConfig as VectorRetrievalConfig,
+      });
+      
+      if (!ragManager.isAvailable()) {
+        return c.json({ error: "RAG manager is not available" }, 500);
+      }
+      
+      const statusManager = await createRAGStatusManager(bookDir, id);
+      const indexer = createRAGIndexer(ragManager, statusManager);
+      
+      // 清空索引
+      await ragManager.clearIndex();
+      await statusManager.reset();
+      
+      // 重新索引基础设定
+      const foundationFiles = ["story_bible.md", "volume_outline.md", "book_rules.md"];
+      for (const file of foundationFiles) {
+        try {
+          const content = await readFile(join(bookDir, "story", file), "utf-8");
+          const chunks = createDocumentProcessor().processDocument(content, {
+            fileName: file,
+            type: "foundation",
+            category: file.replace(".md", ""),
+          });
+          await (ragManager as any).vectorStore.addChunks(chunks);
+        } catch {
+          // 文件可能不存在，跳过
+        }
+      }
+      
+      // 重新索引所有章节
+      const results: Array<{ chapter: number; success: boolean; error?: string }> = [];
+      
+      for (let i = 0; i < chapterNumbers.length; i++) {
+        const chapter = chapterNumbers[i];
+        broadcast("rag:rebuild:progress", { 
+          bookId: id, 
+          current: i + 1, 
+          total: chapterNumbers.length, 
+          chapter 
+        });
+        
+        try {
+          const chapterPath = join(bookDir, "chapters", `chapter_${String(chapter).padStart(3, "0")}.md`);
+          const content = await readFile(chapterPath, "utf-8");
+          await indexer.indexChapter(chapter, content, { chapter });
+          results.push({ chapter, success: true });
+        } catch (error) {
+          results.push({ 
+            chapter, 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+          });
+        }
+      }
+      
+      broadcast("rag:rebuild:complete", { 
+        bookId: id, 
+        total: chapterNumbers.length,
+        indexed: results.filter(r => r.success).length,
+        failed: results.filter(r => !r.success).length,
+      });
+      
+      return c.json({
+        ok: true,
+        total: chapterNumbers.length,
+        indexed: results.filter(r => r.success).length,
+        failed: results.filter(r => !r.success).length,
+        results,
+      });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("rag:rebuild:error", { bookId: id, error });
+      return c.json({ error }, 500);
+    }
   });
 
   // --- AIGC Detection ---
@@ -3734,11 +3964,185 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // --- RAG System Toggle ---
+
+  // Helper function to reload env vars from .env file
+  // Priority: Project .env > Global ~/.inkos/.env > Existing process.env
+  async function reloadEnvFromFile(): Promise<void> {
+    // Save existing process.env values (system env vars)
+    const existingEnv = { ...process.env };
+    
+    // Step 1: Load global env first (lowest priority)
+    try {
+      const { GLOBAL_ENV_PATH } = await import("@actalk/inkos-core");
+      console.log("[RAG Debug] Loading global env from:", GLOBAL_ENV_PATH);
+      const globalEnvContent = await readFile(GLOBAL_ENV_PATH, "utf-8");
+      console.log("[RAG Debug] Global env content length:", globalEnvContent.length);
+      const globalLines = globalEnvContent.split("\n");
+      
+      let loadedCount = 0;
+      for (const line of globalLines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        
+        const eqIndex = trimmed.indexOf("=");
+        if (eqIndex > 0) {
+          const key = trimmed.substring(0, eqIndex);
+          const value = trimmed.substring(eqIndex + 1);
+          // Only set if not set by system env
+          if (!existingEnv[key]) {
+            process.env[key] = value;
+            loadedCount++;
+            if (key.startsWith("RAG_")) {
+              console.log("[RAG Debug] Loaded from global:", key, "=", value);
+            }
+          }
+        }
+      }
+      console.log("[RAG Debug] Total vars loaded from global:", loadedCount);
+    } catch (error) {
+      console.log("[RAG Debug] Failed to load global env:", error instanceof Error ? error.message : String(error));
+    }
+    
+    // Step 2: Load project env (highest priority, overrides everything)
+    try {
+      const envPath = join(root, ".env");
+      console.log("[RAG Debug] Loading project env from:", envPath);
+      const envContent = await readFile(envPath, "utf-8");
+      const lines = envContent.split("\n");
+      
+      let loadedCount = 0;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        
+        const eqIndex = trimmed.indexOf("=");
+        if (eqIndex > 0) {
+          const key = trimmed.substring(0, eqIndex);
+          const value = trimmed.substring(eqIndex + 1);
+          // Project env always overrides
+          process.env[key] = value;
+          loadedCount++;
+          if (key.startsWith("RAG_")) {
+            console.log("[RAG Debug] Loaded from project:", key, "=", value);
+          }
+        }
+      }
+      console.log("[RAG Debug] Total vars loaded from project:", loadedCount);
+    } catch (error) {
+      console.log("[RAG Debug] Failed to load project env:", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  app.get("/api/rag-status", async (c) => {
+    // Reload env vars to get latest changes
+    await reloadEnvFromFile();
+    
+    const enabled = process.env.RAG_ENABLED === "true";
+    const modelType = process.env.RAG_MODEL_TYPE || "openai";
+    const modelName = process.env.RAG_MODEL_NAME || "text-embedding-3-small";
+    
+    // Check if API key is available for the model type
+    let available = false;
+    const apiKeyEnvVars: Record<string, string[]> = {
+      openai: ["OPENAI_API_KEY"],
+      huggingface: ["HUGGINGFACE_API_KEY"],
+      lmstudio: [], // LM Studio doesn't require API key
+      mota: ["MOTA_API_KEY"],
+      modelscope: ["MODELSCOPE_API_KEY"],
+      siliconflow: ["SILICONFLOW_API_KEY"],
+      zhipu: ["ZHIPU_API_KEY"],
+      dashscope: ["DASHSCOPE_API_KEY"],
+      local: [],
+      custom: ["EMBEDDING_API_KEY"],
+    };
+    
+    const envVars = apiKeyEnvVars[modelType] || ["OPENAI_API_KEY"];
+    
+    // For local models (lmstudio, local), check if the service is actually reachable
+    if (modelType === "lmstudio" || modelType === "local") {
+      try {
+        const baseUrl = process.env.RAG_BASE_URL || (modelType === "lmstudio" ? "http://127.0.0.1:1234/v1/embeddings" : "http://localhost:11434/api/embeddings");
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        
+        const response = await fetch(baseUrl.replace("/v1/embeddings", "").replace("/api/embeddings", ""), {
+          method: "GET",
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        
+        available = response.ok;
+      } catch {
+        available = false;
+      }
+    } else {
+      available = envVars.length === 0 || envVars.some(v => !!process.env[v]);
+    }
+    
+    return c.json({
+      enabled,
+      available,
+      modelType,
+      modelName,
+    });
+  });
+
+  app.post("/api/rag-toggle", async (c) => {
+    const { enabled } = await c.req.json<{ enabled?: boolean }>();
+    
+    if (enabled === undefined) {
+      return c.json({ error: "enabled is required" }, 400);
+    }
+    
+    try {
+      // Update .env file
+      const envPath = join(root, ".env");
+      let envContent = "";
+      
+      try {
+        envContent = await readFile(envPath, "utf-8");
+      } catch {
+        // File doesn't exist, will create new
+      }
+      
+      // Update or add RAG_ENABLED
+      const envLines = envContent.split("\n");
+      const ragEnabledIndex = envLines.findIndex(line => line.startsWith("RAG_ENABLED="));
+      
+      if (ragEnabledIndex >= 0) {
+        envLines[ragEnabledIndex] = `RAG_ENABLED=${enabled}`;
+      } else {
+        envLines.push(`RAG_ENABLED=${enabled}`);
+      }
+      
+      // Add default config if not exists
+      if (enabled && !envLines.some(line => line.startsWith("RAG_MODEL_TYPE="))) {
+        envLines.push("RAG_MODEL_TYPE=openai");
+      }
+      if (enabled && !envLines.some(line => line.startsWith("RAG_MODEL_NAME="))) {
+        envLines.push("RAG_MODEL_NAME=text-embedding-3-small");
+      }
+      
+      await writeFile(envPath, envLines.join("\n"), "utf-8");
+      
+      // Update process.env for current session
+      process.env.RAG_ENABLED = String(enabled);
+      
+      return c.json({ ok: true, enabled });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
   // --- Doctor (environment health check) ---
 
   app.get("/api/doctor", async (c) => {
     const { existsSync } = await import("node:fs");
     const { GLOBAL_ENV_PATH } = await import("@actalk/inkos-core");
+
+    // Reload env vars to get latest changes
+    await reloadEnvFromFile();
 
     const checks = {
       inkosJson: existsSync(join(root, "inkos.json")),
@@ -3768,18 +4172,80 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       checks.llmConnected = true;
     } catch { /* ignore */ }
 
-    // Check RAG system status
+    // Check RAG system status from environment variables
     try {
-      const projectConfig = await state.loadProjectConfig();
-      const vectorRetrieval = projectConfig?.vectorRetrieval as { enabled?: boolean; model?: { model?: string } } | undefined;
-      if (vectorRetrieval) {
-        checks.rag.enabled = vectorRetrieval.enabled ?? false;
-        checks.rag.embeddingModel = vectorRetrieval.model?.model ?? null;
-        checks.rag.configPath = join(root, "inkos.json");
+      const ragEnabled = process.env.RAG_ENABLED === "true";
+      const modelType = process.env.RAG_MODEL_TYPE || "openai";
+      const modelName = process.env.RAG_MODEL_NAME || "text-embedding-3-small";
+      
+      console.log("[RAG Debug] RAG_ENABLED:", process.env.RAG_ENABLED);
+      console.log("[RAG Debug] RAG_MODEL_TYPE:", process.env.RAG_MODEL_TYPE);
+      console.log("[RAG Debug] RAG_MODEL_NAME:", process.env.RAG_MODEL_NAME);
+      console.log("[RAG Debug] Parsed - enabled:", ragEnabled, "type:", modelType, "name:", modelName);
+      
+      checks.rag.enabled = ragEnabled;
+      checks.rag.embeddingModel = `${modelType}/${modelName}`;
+      checks.rag.configPath = join(root, ".env");
+      
+      if (ragEnabled) {
+        // Check if API key is available for the model type
+        const apiKeyEnvVars: Record<string, string[]> = {
+          openai: ["OPENAI_API_KEY"],
+          huggingface: ["HUGGINGFACE_API_KEY"],
+          lmstudio: [], // LM Studio doesn't require API key
+          mota: ["MOTA_API_KEY"],
+          modelscope: ["MODELSCOPE_API_KEY"],
+          siliconflow: ["SILICONFLOW_API_KEY"],
+          zhipu: ["ZHIPU_API_KEY"],
+          dashscope: ["DASHSCOPE_API_KEY"],
+          local: [],
+          custom: ["EMBEDDING_API_KEY"],
+        };
         
-        if (checks.rag.enabled) {
-          // Check if embedding API key is available
-          checks.rag.available = !!process.env.OPENAI_API_KEY || !!process.env.EMBEDDING_API_KEY;
+        const envVars = apiKeyEnvVars[modelType] || ["OPENAI_API_KEY"];
+        
+        // For all models, check if the service is actually reachable
+        if (modelType === "lmstudio" || modelType === "local") {
+          try {
+            const baseUrl = process.env.RAG_BASE_URL || (modelType === "lmstudio" ? "http://127.0.0.1:1234/v1/embeddings" : "http://localhost:11434/api/embeddings");
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            
+            const response = await fetch(baseUrl.replace("/v1/embeddings", "").replace("/api/embeddings", ""), {
+              method: "GET",
+              signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            
+            checks.rag.available = response.ok;
+          } catch {
+            checks.rag.available = false;
+          }
+        } else {
+          // For cloud models, verify API key exists and try a test request
+          const hasApiKey = envVars.length === 0 || envVars.some(v => !!process.env[v]);
+          
+          if (!hasApiKey) {
+            checks.rag.available = false;
+          } else {
+            // Try to make a test embedding request
+            try {
+              const { createEmbeddingClient } = await import("@actalk/inkos-core");
+              const testConfig: VectorRetrievalConfig = {
+                enabled: true,
+                model: {
+                  type: modelType as VectorModelType,
+                  model: modelName,
+                },
+              };
+              const client = createEmbeddingClient(testConfig.model);
+              await client.embed("test");
+              checks.rag.available = true;
+            } catch (error) {
+              console.log("[RAG Debug] Embedding test failed:", error instanceof Error ? error.message : String(error));
+              checks.rag.available = false;
+            }
+          }
         }
       }
     } catch (error) {

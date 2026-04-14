@@ -34,6 +34,8 @@ import type { ContextPackage, RuleStack } from "../models/input-governance.js";
 import type { VectorRetrievalConfig } from "../vector/types.js";
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, isOutsideSoftRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
 import { createRAGManager, type RAGManager } from "../rag/rag-manager.js";
+import { createRAGStatusManager, type RAGStatusManager } from "../rag/rag-status.js";
+import { createRAGIndexer } from "../rag/rag-indexer.js";
 import type { MemorySelection } from "../utils/memory-retrieval.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
@@ -182,6 +184,8 @@ export class PipelineRunner {
   private readonly agentClients = new Map<string, LLMClient>();
   private memoryIndexFallbackWarned = false;
   private ragManagers = new Map<string, RAGManager>();
+  private ragStatusManagers = new Map<string, RAGStatusManager>();
+  private ragIndexers = new Map<string, ReturnType<typeof createRAGIndexer>>();
 
   constructor(config: PipelineConfig) {
     this.config = config;
@@ -728,6 +732,44 @@ ${historicalIssues}
     }
   }
 
+  private async getRAGStatusManager(bookId: string): Promise<RAGStatusManager | null> {
+    try {
+      if (this.ragStatusManagers.has(bookId)) {
+        return this.ragStatusManagers.get(bookId)!;
+      }
+      
+      const bookDir = this.state.bookDir(bookId);
+      const statusManager = await createRAGStatusManager(bookDir, bookId);
+      this.ragStatusManagers.set(bookId, statusManager);
+      return statusManager;
+    } catch (error) {
+      this.config.logger?.warn(`Failed to initialize RAG status manager: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  private async getRAGIndexer(bookId: string): Promise<ReturnType<typeof createRAGIndexer> | null> {
+    try {
+      if (this.ragIndexers.has(bookId)) {
+        return this.ragIndexers.get(bookId)!;
+      }
+      
+      const ragManager = await this.getRAGManager(bookId);
+      const statusManager = await this.getRAGStatusManager(bookId);
+      
+      if (!ragManager || !statusManager) {
+        return null;
+      }
+      
+      const indexer = createRAGIndexer(ragManager, statusManager);
+      this.ragIndexers.set(bookId, indexer);
+      return indexer;
+    } catch (error) {
+      this.config.logger?.warn(`Failed to initialize RAG indexer: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
   private async indexMemoryToRAG(bookId: string): Promise<void> {
     try {
       const ragManager = await this.getRAGManager(bookId);
@@ -750,95 +792,25 @@ ${historicalIssues}
   private async indexBookFoundationToRAG(
     bookId: string,
     bookDir?: string,
-    foundation?: ArchitectOutput
+    foundation?: ArchitectOutput,
+    options?: { defer?: boolean }
   ): Promise<void> {
     try {
       const ragManager = await this.getRAGManager(bookId);
-      if (!ragManager) return;
+      const indexer = await this.getRAGIndexer(bookId);
       
-      const targetBookDir = bookDir || this.state.bookDir(bookId);
-      const storyDir = join(targetBookDir, "story");
+      if (!ragManager || !indexer) return;
       
-      // 如果提供了 foundation，直接索引 foundation 内容
+      // 如果提供了 foundation，使用 indexer 进行索引（支持延迟写入）
       if (foundation) {
-        const { createDocumentProcessor } = await import("../rag/document-processor.js");
-        const documentProcessor = createDocumentProcessor();
-        
-        // 索引 story_bible
-        if (foundation.storyBible) {
-          const chunks = documentProcessor.processDocument(foundation.storyBible, {
-            fileName: "story_bible.md",
-            type: "foundation",
-            category: "story_bible",
-          });
-          const vectorStore = (ragManager as any).vectorStore;
-          if (vectorStore) {
-            await vectorStore.addChunks(chunks);
-          }
-          this.config.logger?.info(`Indexed story_bible for book ${bookId}`);
-        }
-        
-        // 索引 volume_outline
-        if (foundation.volumeOutline) {
-          const chunks = documentProcessor.processDocument(foundation.volumeOutline, {
-            fileName: "volume_outline.md",
-            type: "foundation",
-            category: "volume_outline",
-          });
-          const vectorStore = (ragManager as any).vectorStore;
-          if (vectorStore) {
-            await vectorStore.addChunks(chunks);
-          }
-          this.config.logger?.info(`Indexed volume_outline for book ${bookId}`);
-        }
-        
-        // 索引 book_rules
-        if (foundation.bookRules) {
-          const chunks = documentProcessor.processDocument(foundation.bookRules, {
-            fileName: "book_rules.md",
-            type: "foundation",
-            category: "book_rules",
-          });
-          const vectorStore = (ragManager as any).vectorStore;
-          if (vectorStore) {
-            await vectorStore.addChunks(chunks);
-          }
-          this.config.logger?.info(`Indexed book_rules for book ${bookId}`);
-        }
-        
-        // 索引 current_state
-        if (foundation.currentState) {
-          const chunks = documentProcessor.processDocument(foundation.currentState, {
-            fileName: "current_state.md",
-            type: "foundation",
-            category: "current_state",
-          });
-          const vectorStore = (ragManager as any).vectorStore;
-          if (vectorStore) {
-            await vectorStore.addChunks(chunks);
-          }
-          this.config.logger?.info(`Indexed current_state for book ${bookId}`);
-        }
-        
-        // 索引 pending_hooks
-        if (foundation.pendingHooks) {
-          const chunks = documentProcessor.processDocument(foundation.pendingHooks, {
-            fileName: "pending_hooks.md",
-            type: "foundation",
-            category: "pending_hooks",
-          });
-          const vectorStore = (ragManager as any).vectorStore;
-          if (vectorStore) {
-            await vectorStore.addChunks(chunks);
-          }
-          this.config.logger?.info(`Indexed pending_hooks for book ${bookId}`);
-        }
-        
-        this.config.logger?.info(`RAG foundation indexed for book ${bookId}`);
+        await indexer.indexFoundation(foundation, { defer: options?.defer ?? false });
+        this.config.logger?.info(`RAG foundation indexed for book ${bookId}${options?.defer ? " (deferred)" : ""}`);
         return;
       }
       
       // 否则从文件读取（用于重写大纲后的索引）
+      const targetBookDir = bookDir || this.state.bookDir(bookId);
+      const storyDir = join(targetBookDir, "story");
       const foundationFiles = [
         "story_bible.md",
         "volume_outline.md",
@@ -1026,9 +998,9 @@ ${historicalIssues}
         book.language ?? gp.language,
       );
 
-      // 索引基础设定到RAG系统
-      this.logStage(stageLanguage, { zh: "索引基础设定到RAG系统", en: "indexing foundation to RAG system" });
-      await this.indexBookFoundationToRAG(book.id, stagingBookDir, foundation);
+      // 索引基础设定到RAG系统（延迟写入，等待用户确认后再真正写入）
+      this.logStage(stageLanguage, { zh: "准备索引基础设定到RAG系统（延迟写入）", en: "preparing to index foundation to RAG system (deferred)" });
+      await this.indexBookFoundationToRAG(book.id, stagingBookDir, foundation, { defer: true });
 
       this.logStage(stageLanguage, { zh: "初始化控制文档", en: "initializing control documents" });
       await this.state.ensureControlDocumentsAt(
@@ -1128,7 +1100,22 @@ ${historicalIssues}
         en: "Book creation completed",
       });
 
-      // 索引基础设定文件到 RAG 系统
+      // 提交延迟的RAG索引
+      this.logStage(stageLanguage, {
+        zh: "提交RAG索引",
+        en: "Committing RAG index",
+      });
+      const indexer = await this.getRAGIndexer(bookId);
+      if (indexer) {
+        try {
+          await indexer.commit();
+          this.config.logger?.info(`RAG index committed for book ${bookId}`);
+        } catch (error) {
+          this.config.logger?.warn(`Failed to commit RAG index: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      // 索引基础设定文件到 RAG 系统（从文件读取，用于重写大纲后的场景）
       await this.indexBookFoundationToRAG(bookId);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

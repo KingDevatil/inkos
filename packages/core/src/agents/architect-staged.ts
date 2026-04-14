@@ -86,7 +86,53 @@ export class StagedArchitectAgent extends ArchitectAgent {
     const { profile: gp } = await readGenreProfile(this.ctx.projectRoot, book.genre);
     const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
 
-    const systemPrompt = `你是一个专业的网络小说架构师。你的任务是为一本新的${gp.name}小说生成核心世界观和人物设定。
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web-fiction architect. Your task is to generate the core world-building and character settings for a new ${gp.name} novel.
+
+Requirements:
+- Book Title: ${book.title}
+- Platform: ${book.platform}
+- Genre: ${gp.name}
+- Target Chapters: ${book.targetChapters}
+
+${externalContext ? `\n【Creative Brief】\n${externalContext}\n` : ""}
+${reviewFeedback ? `\n【Review Feedback】\n${reviewFeedback}\n` : ""}
+
+Please generate the following content:
+
+1. World-building (power system, core mechanics, world rules)
+2. Protagonist setup (name, identity, personality, advantage/golden finger)
+3. Important supporting characters (antagonists, allies, mentors, etc.)
+4. Faction distribution (sects, families, organizations, etc.)
+5. Geography and environment (key scenes)
+6. Title and blurb
+
+### Format Requirements (Strict)
+- Use structured second-level headings: ## 01_Worldview, ## 02_Protagonist, etc.
+- Use simple Markdown format only: headings, lists, tables
+- DO NOT use decorative symbols like: ┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- DO NOT use ASCII art or box-drawing characters
+- DO NOT use emoji or special Unicode symbols for decoration
+- Keep the format clean and readable
+
+### Title Methodology
+- Keep the title clear, direct, and easy to understand
+- Use a format that immediately signals genre and core appeal
+- Avoid overly literary or misleading titles
+
+### Blurb Methodology (within 300 words, choose one):
+1. Open with conflict, then reveal the hook, then leave suspense
+2. Summarize only the main line and keep a clear suspense gap
+3. Use a miniature scene that captures the book's strongest pull
+
+Core blurb principle:
+- The blurb is product copy that must make readers want to click
+
+Notes:
+- Once the protagonist's name is determined, all subsequent content must use this name
+- The power system must be clear and consistent
+- All settings must have clear boundaries and costs`
+      : `你是一个专业的网络小说架构师。你的任务是为一本新的${gp.name}小说生成核心世界观和人物设定。
 
 要求：
 - 书名：${book.title}
@@ -105,6 +151,31 @@ ${reviewFeedback ? `\n【审核反馈】\n${reviewFeedback}\n` : ""}
 4. 势力分布（宗门、家族、组织等）
 5. 地理与环境（关键场景）
 6. 书名与简介
+
+### 格式要求（严格遵守）
+- 使用结构化二级标题：## 01_世界观、## 02_主角 等
+- 仅使用简单Markdown格式：标题、列表、表格
+- 禁止使用装饰性符号如：┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- 禁止使用ASCII艺术或制表符边框
+- 禁止使用emoji或特殊Unicode符号作为装饰
+- 保持格式简洁清晰
+
+### 书名方法论
+- 书名必须简单扼要、通俗易懂，读者看到书名就能知道题材和主题
+- 采用"题材+核心爽点+主角行为"的长书名格式，避免文艺化
+- 融入平台当下热点词汇，吸引精准流量
+- 禁止题材错位（都市文取玄幻书名会导致读者流失）
+- 参考热榜书名风格：俏皮、通俗、有记忆点
+
+### 简介方法论（300字内，三种写法任选其一）：
+1. 冲突开篇法：第一句抛困境/冲突，第二句亮金手指/核心能力，第三句留悬念
+2. 高度概括法：只挑主线概括（不是全篇概括），必须留悬念
+3. 小剧场法：提炼故事中最经典的桥段，作为引子
+
+简介核心原则：
+- 简介 = 产品宣传语，必须让读者产生"我要点开看"的冲动
+- 可以从剧情设定、人设、或某个精彩片段切入
+- 必须有噱头（如"凡是被写在笔记本上的名字，最后都得死"）
 
 注意：
 - 主角姓名一旦确定，后续所有内容必须使用此姓名
@@ -133,7 +204,44 @@ ${reviewFeedback ? `\n【审核反馈】\n${reviewFeedback}\n` : ""}
     const { profile: gp } = await readGenreProfile(this.ctx.projectRoot, book.genre);
     const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
 
-    const systemPrompt = `你是一个专业的网络小说架构师。你的任务是基于已有设定生成卷纲。
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web-fiction architect. Your task is to generate the volume outline based on the established story bible.
+
+【Established Core Settings】
+${storyBible}
+
+Requirements:
+- Book Title: ${book.title}
+- Target Chapters: ${book.targetChapters}
+- Chapter Length: ${book.chapterWordCount} words
+
+Generate the following content:
+
+1. Overall volume plan (volume breakdown)
+2. Detailed chapter planning for Volume 1 (first 50 chapters)
+   - Label each chapter type (battle/info/transition/climax/hook)
+   - Specify conflict density and pacing
+   - Mark key turning points and payoff moments
+3. Key turning points explanation
+4. Payoff goals checklist
+
+### Format Requirements (Strict)
+- Use simple Markdown format only: headings, lists, tables
+- DO NOT use decorative symbols like: ┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- DO NOT use ASCII art or box-drawing characters
+- DO NOT use emoji or special Unicode symbols for decoration
+- Keep the format clean and readable
+
+### Golden First Three Chapters Rule
+- Chapter 1: throw the core conflict immediately; no large background dump
+- Chapter 2: show the core edge / ability / leverage that answers Chapter 1's pressure
+- Chapter 3: establish the first concrete short-term goal that gives readers a reason to continue
+
+Notes:
+- Must strictly follow the story bible settings
+- Protagonist name, power system, and faction distribution must be completely consistent with the story bible
+- Conflict design must match the protagonist's personality`
+      : `你是一个专业的网络小说架构师。你的任务是基于已有设定生成卷纲。
 
 【已确定的核心设定】
 ${storyBible}
@@ -152,6 +260,18 @@ ${storyBible}
    - 标注关键转折点和爽点
 3. 关键转折点说明
 4. 收益目标清单
+
+### 格式要求（严格遵守）
+- 仅使用简单Markdown格式：标题、列表、表格
+- 禁止使用装饰性符号如：┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- 禁止使用ASCII艺术或制表符边框
+- 禁止使用emoji或特殊Unicode符号作为装饰
+- 保持格式简洁清晰
+
+### 黄金三章法则（前三章必须遵循）
+- 第1章：抛出核心冲突（主角立即面临困境/危机/选择），禁止大段背景灌输
+- 第2章：展示金手指/核心能力（主角如何应对第1章的困境），让读者看到爽点预期
+- 第3章：明确短期目标（主角确立第一个具体可达成的目标），给读者追读理由
 
 注意：
 - 必须严格遵循故事圣经中的设定
@@ -277,7 +397,47 @@ ${storyBible}
     const { profile: gp } = await readGenreProfile(this.ctx.projectRoot, book.genre);
     const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
 
-    const systemPrompt = `你是一个专业的网络小说架构师。你的任务是基于已有设定生成初始伏笔池。
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web-fiction architect. Your task is to generate the initial hook pool based on established settings.
+
+【Established Core Settings】
+${ctx.storyBible}
+
+【Established Volume Outline】
+${ctx.volumeOutline}
+
+Please generate the following content:
+
+1. Initial Hook Pool (Markdown table)
+   - hook_id: Hook ID (e.g., HK001)
+   - start_chapter: Number
+   - type: Item/Character/Rule/Faction/Resource/Identity/Conflict etc.
+   - status: pending
+   - last_advanced_chapter: 0 (book creation stage)
+   - expected_payoff: Chapter range (e.g., 15-20)
+   - payoff_timing: immediate/near-term/mid-arc/slow-burn/endgame
+   - notes: Detailed description
+
+2. Hook Payoff Priority Explanation
+
+### Format Requirements (Strict)
+- Use simple Markdown table format only
+- DO NOT use decorative symbols like: ┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- DO NOT use ASCII art or box-drawing characters
+- DO NOT use emoji or special Unicode symbols for decoration
+- Keep the format clean and readable
+
+### Hook Table Rules:
+- Column 5 must be a pure chapter number, never natural-language description
+- During book creation, all planned hooks are still unapplied, so last_advanced_chapter = 0
+- Column 7 must be one of: immediate / near-term / mid-arc / slow-burn / endgame
+- If you want to describe the initial clue/signal, put it in notes instead of column 5
+
+Notes:
+- Hooks must be consistent with settings in story bible and volume outline
+- Hooks must cover main characters, key items, and core rules
+- Expected payoff chapters must match the volume outline planning`
+      : `你是一个专业的网络小说架构师。你的任务是基于已有设定生成初始伏笔池。
 
 【已确定的核心设定】
 ${ctx.storyBible}
@@ -298,6 +458,19 @@ ${ctx.volumeOutline}
    - 备注: 详细说明
 
 2. 伏笔回收优先级说明
+
+### 格式要求（严格遵守）
+- 仅使用简单Markdown表格格式
+- 禁止使用装饰性符号如：┌─┐│└┘═║╔╗╚╝╠╣╦╩╬
+- 禁止使用ASCII艺术或制表符边框
+- 禁止使用emoji或特殊Unicode符号作为装饰
+- 保持格式简洁清晰
+
+### 伏笔表规则：
+- 第5列必须是纯数字章节号，不能写自然语言描述
+- 建书阶段所有伏笔都还没正式推进，所以第5列统一填 0
+- 第7列必须填写：立即 / 近期 / 中程 / 慢烧 / 终局 之一
+- 如果要说明"初始线索/最初信号"，写进备注，不要写进第5列
 
 注意：
 - 伏笔必须与故事圣经和卷纲中的设定一致

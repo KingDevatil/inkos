@@ -35,7 +35,13 @@ export function LogViewer({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunct
   // Merge initial logs with SSE logs
   useEffect(() => {
     if (data?.entries) {
-      setLogs([...data.entries]);
+      // Sort by timestamp to ensure correct order
+      const sorted = [...data.entries].sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return timeA - timeB;
+      });
+      setLogs(sorted);
     }
   }, [data]);
 
@@ -52,7 +58,24 @@ export function LogViewer({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunct
           timestamp: new Date(m.timestamp).toISOString(),
         };
       });
-      setLogs(prev => [...prev, ...newEntries].slice(-500));
+      setLogs(prev => {
+        // Merge and deduplicate based on timestamp + message
+        const combined = [...prev, ...newEntries];
+        const seen = new Set<string>();
+        const unique = combined.filter(entry => {
+          const key = `${entry.timestamp}-${entry.message}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        // Sort by timestamp
+        unique.sort((a, b) => {
+          const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+          const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+          return timeA - timeB;
+        });
+        return unique.slice(-500);
+      });
     }
   }, [messages]);
 
@@ -129,7 +152,7 @@ export function LogViewer({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunct
           {logs.length > 0 ? (
             <div className="space-y-1 font-mono text-sm leading-relaxed">
               {[...logs].reverse().map((entry, i) => (
-                <div key={i} className="flex gap-2">
+                <div key={`${entry.timestamp}-${i}`} className="flex gap-2">
                   {entry.timestamp && (
                     <span className="text-muted-foreground shrink-0 w-20 tabular-nums">
                       {new Date(entry.timestamp).toLocaleTimeString()}

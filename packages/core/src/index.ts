@@ -192,3 +192,29 @@ export {
 } from "./interaction/index.js";
 export { processProjectInteractionInput } from "./interaction/project-control.js";
 export { createInteractionToolsFromDeps } from "./interaction/project-tools.js";
+
+// RAG
+export {
+  createRAGManager,
+  createRAGConfigFromEnv,
+  type RAGManager,
+  type RAGContext,
+  type RAGResponse,
+} from "./rag/rag-manager.js";
+export {
+  createRAGStatusManager,
+  type RAGStatusManager,
+  type BookRAGStatus,
+  type ChapterRAGStatus,
+  type RAGCheckResult,
+} from "./rag/rag-status.js";
+export {
+  createRAGIndexer,
+  type RAGIndexer,
+  type IndexOperation,
+  type IndexResult,
+  type BatchIndexOptions,
+} from "./rag/rag-indexer.js";
+export { createDocumentProcessor, type DocumentChunk } from "./rag/document-processor.js";
+export { createEmbeddingClient } from "./vector/embedding-client.js";
+export type { VectorRetrievalConfig, VectorModelConfig, VectorModelType } from "./vector/types.js";

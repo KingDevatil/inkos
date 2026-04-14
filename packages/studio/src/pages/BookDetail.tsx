@@ -111,6 +111,277 @@ const STATUS_CONFIG: Record<string, { color: string; icon: React.ReactNode }> = 
   "imported": { color: "text-gray-600 bg-gray-50", icon: <Download size={12} /> },
 };
 
+// RAG检测补充按钮组件
+function RAGSupplementButton({ bookId }: { bookId: string }) {
+  const [showModal, setShowModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState<{
+    foundationStatus: string;
+    summary: { total: number; indexed: number; missing: number; outdated: number };
+    chapters: Array<{ chapter: number; status: string; indexedAt?: string }>;
+  } | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [progress, setProgress] = useState<{ current: number; total: number; chapter: number } | null>(null);
+
+  const checkStatus = async () => {
+    setChecking(true);
+    try {
+      const data = await fetchJson<{
+        status: unknown;
+        check: {
+          foundationStatus: string;
+          summary: { total: number; indexed: number; missing: number; outdated: number };
+          chapters: Array<{ chapter: number; status: string; indexedAt?: string }>;
+        };
+      }>(`/books/${bookId}/rag-status`);
+      setStatus(data.check);
+    } catch (e) {
+      setLogs(prev => [...prev, `检查失败: ${e instanceof Error ? e.message : String(e)}`]);
+    }
+    setChecking(false);
+  };
+
+  const supplement = async (forceReindex = false) => {
+    setLoading(true);
+    setLogs([]);
+    setProgress(null);
+    
+    try {
+      const response = await fetch(`/api/books/${bookId}/rag-supplement`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forceReindex }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.ok) {
+        setLogs(prev => [
+          ...prev,
+          `检测完成: 共 ${data.checked} 章`,
+          `基础设定: ${data.foundationStatus === "indexed" ? "已索引" : "未索引"}`,
+          `已索引: ${data.summary.indexed} 章`,
+          `缺失: ${data.summary.missing} 章`,
+          `补充成功: ${data.results.filter((r: { success: boolean }) => r.success).length} 章`,
+          `失败: ${data.results.filter((r: { success: boolean }) => !r.success).length} 章`,
+        ]);
+        
+        // 显示详细结果
+        data.results.forEach((result: { chapter: number; success: boolean; error?: string }) => {
+          if (result.success) {
+            setLogs(prev => [...prev, `✓ 第${result.chapter}章 索引成功`]);
+          } else {
+            setLogs(prev => [...prev, `✗ 第${result.chapter}章 索引失败: ${result.error || "未知错误"}`]);
+          }
+        });
+        
+        // 刷新状态
+        await checkStatus();
+      } else {
+        setLogs(prev => [...prev, `补充失败: ${data.error || "未知错误"}`]);
+      }
+    } catch (e) {
+      setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
+    }
+    
+    setLoading(false);
+    setProgress(null);
+  };
+
+  const rebuild = async () => {
+    if (!confirm("确定要重建所有RAG索引吗？这将清空现有索引并重新索引所有内容。")) {
+      return;
+    }
+    
+    setLoading(true);
+    setLogs([]);
+    
+    try {
+      const response = await fetch(`/api/books/${bookId}/rag-rebuild`, {
+        method: "POST",
+      });
+      
+      const data = await response.json();
+      
+      if (data.ok) {
+        setLogs(prev => [
+          ...prev,
+          `重建完成: 共 ${data.total} 章`,
+          `索引成功: ${data.indexed} 章`,
+          `失败: ${data.failed} 章`,
+        ]);
+        
+        // 刷新状态
+        await checkStatus();
+      } else {
+        setLogs(prev => [...prev, `重建失败: ${data.error || "未知错误"}`]);
+      }
+    } catch (e) {
+      setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
+    }
+    
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <button
+        onClick={() => {
+          setShowModal(true);
+          checkStatus();
+        }}
+        className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+      >
+        <Database size={14} />
+        RAG检测补充
+      </button>
+
+      {showModal && createPortal(
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-background rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-border/40">
+              <h2 className="text-lg font-bold">RAG 检测补充</h2>
+              <button
+                onClick={() => setShowModal(false)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6 space-y-4">
+              {checking ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin mr-2" />
+                  正在检测状态...
+                </div>
+              ) : status ? (
+                <div className="space-y-4">
+                  {/* 统计信息 */}
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="bg-secondary/30 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold">{status.summary.total}</div>
+                      <div className="text-xs text-muted-foreground">总章节</div>
+                    </div>
+                    <div className="bg-emerald-500/10 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-emerald-600">{status.summary.indexed}</div>
+                      <div className="text-xs text-muted-foreground">已索引</div>
+                    </div>
+                    <div className="bg-amber-500/10 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-amber-600">{status.summary.missing}</div>
+                      <div className="text-xs text-muted-foreground">缺失</div>
+                    </div>
+                    <div className="bg-blue-500/10 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-blue-600">{status.summary.outdated}</div>
+                      <div className="text-xs text-muted-foreground">过期</div>
+                    </div>
+                  </div>
+
+                  {/* 基础设定状态 */}
+                  <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-lg">
+                    <span className="text-sm font-medium">基础设定:</span>
+                    <span className={`text-sm ${status.foundationStatus === "indexed" ? "text-emerald-600" : "text-amber-600"}`}>
+                      {status.foundationStatus === "indexed" ? "✓ 已索引" : "⚠ 未索引"}
+                    </span>
+                  </div>
+
+                  {/* 章节列表 */}
+                  <div className="border border-border/40 rounded-lg overflow-hidden">
+                    <div className="bg-secondary/30 px-4 py-2 text-sm font-medium border-b border-border/40">
+                      章节索引状态
+                    </div>
+                    <div className="max-h-48 overflow-auto">
+                      {status.chapters.map(ch => (
+                        <div
+                          key={ch.chapter}
+                          className="flex items-center justify-between px-4 py-2 border-b border-border/20 last:border-0 text-sm"
+                        >
+                          <span>第{ch.chapter}章</span>
+                          <span className={`text-xs ${
+                            ch.status === "indexed" ? "text-emerald-600" : "text-amber-600"
+                          }`}>
+                            {ch.status === "indexed" ? "✓ 已索引" : "⚠ 未索引"}
+                            {ch.indexedAt && ` (${new Date(ch.indexedAt).toLocaleDateString()})`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 日志输出 */}
+                  {logs.length > 0 && (
+                    <div className="border border-border/40 rounded-lg overflow-hidden">
+                      <div className="bg-secondary/30 px-4 py-2 text-sm font-medium border-b border-border/40">
+                        操作日志
+                      </div>
+                      <div className="max-h-48 overflow-auto p-4 space-y-1 text-xs font-mono bg-black/5">
+                        {logs.map((log, i) => (
+                          <div key={i} className="text-muted-foreground">{log}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 进度条 */}
+                  {progress && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span>正在处理...</span>
+                        <span>{progress.current} / {progress.total}</span>
+                      </div>
+                      <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all"
+                          style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-6 border-t border-border/40">
+              <button
+                onClick={() => setShowModal(false)}
+                className="px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all"
+              >
+                关闭
+              </button>
+              <button
+                onClick={() => supplement(false)}
+                disabled={loading || !status || status.summary.missing === 0}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? <div className="w-4 h-4 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <RefreshCw size={14} />}
+                补充缺失
+              </button>
+              <button
+                onClick={() => supplement(true)}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 transition-all disabled:opacity-50"
+              >
+                {loading ? <div className="w-4 h-4 border-2 border-amber-600/20 border-t-amber-600 rounded-full animate-spin" /> : <RotateCcw size={14} />}
+                强制重新索引
+              </button>
+              <button
+                onClick={rebuild}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 transition-all disabled:opacity-50"
+              >
+                {loading ? <div className="w-4 h-4 border-2 border-destructive-foreground/20 border-t-destructive-foreground rounded-full animate-spin" /> : <Database size={14} />}
+                重建索引
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 export function BookDetail({
   bookId,
   nav,
@@ -824,6 +1095,7 @@ export function BookDetail({
           {loadingAuditConfig ? <div className="w-4 h-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" /> : <ShieldCheck size={14} />}
           审计配置
         </button>
+        <RAGSupplementButton bookId={bookId} />
         <div className="flex items-center gap-2">
           <select
             value={exportFormat}

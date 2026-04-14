@@ -184,15 +184,69 @@ Be strict. 80 means "ready to write without changes."`;
   ): FoundationReviewResult {
     const parsedDimensions: Array<{ readonly name: string; readonly score: number; readonly feedback: string }> = [];
 
+    // Debug: log the raw content for troubleshooting
+    console.log("[FoundationReviewer] Raw AI response:");
+    console.log(content.slice(0, 2000));
+    console.log("...");
+
     for (let i = 0; i < dimensions.length; i++) {
+      // Match dimension block: === DIMENSION: N === followed by score and feedback
+      // The feedback ends before the next dimension header (=== DIMENSION:) or end of string
       const regex = new RegExp(
-        `=== DIMENSION: ${i + 1} ===\\s*[\\s\\S]*?(?:分数|Score)[：:]\\s*(\\d+)[\\s\\S]*?(?:意见|Feedback)[：:]\\s*([\\s\\S]*?)(?==== |$)`,
+        `=== DIMENSION: ${i + 1} ===\\s*(?:分数|Score)?[：:]?\\s*(\\d+)?[\\s\\S]*?(?:意见|Feedback)[：:]\\s*([\\s\\S]*?)(?=\\n=== DIMENSION:|$)`,
+        "i"
       );
       const match = content.match(regex);
+
+      if (!match) {
+        console.log(`[FoundationReviewer] Failed to parse dimension ${i + 1}: ${dimensions[i]?.slice(0, 50)}`);
+        // Try to find what actually appears in the content for this dimension
+        const dimHeader = content.match(new RegExp(`=== DIMENSION: ${i + 1} ===`, "i"));
+        if (dimHeader) {
+          const startIdx = dimHeader.index ?? 0;
+          const endIdx = content.indexOf("=== DIMENSION:", startIdx + 20);
+          const snippet = content.slice(startIdx, endIdx > 0 ? endIdx : startIdx + 500);
+          console.log(`[FoundationReviewer] Found dimension header, snippet:\n${snippet}`);
+        } else {
+          console.log(`[FoundationReviewer] Dimension header not found in content`);
+        }
+      }
+
+      // Try alternative parsing if first regex fails
+      let score = 50;
+      let feedback = "(parse failed)";
+
+      if (match && match[1]) {
+        score = parseInt(match[1], 10);
+        feedback = match[2]?.trim() || "(no feedback)";
+      } else {
+        // Try alternative: look for the dimension header and extract score/feedback manually
+        const dimHeader = content.match(new RegExp(`=== DIMENSION: ${i + 1} ===`, "i"));
+        if (dimHeader) {
+          const startIdx = dimHeader.index ?? 0;
+          const endIdx = content.indexOf("=== DIMENSION:", startIdx + 20);
+          const block = content.slice(startIdx, endIdx > 0 ? endIdx : undefined);
+
+          // Try to find score
+          const scoreMatch = block.match(/(?:分数|Score)[：:]\s*(\d+)/i);
+          if (scoreMatch) {
+            score = parseInt(scoreMatch[1], 10);
+          }
+
+          // Try to find feedback
+          const feedbackMatch = block.match(/(?:意见|Feedback)[：:]\s*([\s\S]*?)(?=\n===|$)/i);
+          if (feedbackMatch) {
+            feedback = feedbackMatch[1].trim();
+          }
+
+          console.log(`[FoundationReviewer] Alternative parsing for dimension ${i + 1}: score=${score}`);
+        }
+      }
+
       parsedDimensions.push({
         name: dimensions[i]!,
-        score: match ? parseInt(match[1]!, 10) : 50,
-        feedback: match ? match[2]!.trim() : "(parse failed)",
+        score,
+        feedback,
       });
     }
 

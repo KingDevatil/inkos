@@ -1,4 +1,14 @@
-export type VectorModelType = "openai" | "huggingface" | "local" | "mota" | "custom";
+export type VectorModelType =
+  | "openai"
+  | "huggingface"
+  | "local"
+  | "lmstudio"
+  | "mota"
+  | "modelscope"
+  | "siliconflow"
+  | "zhipu"
+  | "dashscope"
+  | "custom";
 
 export interface VectorModelConfig {
   readonly type: VectorModelType;

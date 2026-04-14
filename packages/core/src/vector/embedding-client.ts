@@ -152,6 +152,74 @@ class LocalEmbeddingClient implements EmbeddingClient {
   }
 }
 
+/**
+ * LM Studio Embedding Client
+ * LM Studio provides OpenAI-compatible API for local models
+ */
+class LMStudioEmbeddingClient implements EmbeddingClient {
+  private readonly model: string;
+  private readonly baseUrl: string;
+  private readonly apiKey: string;
+
+  constructor(config: VectorModelConfig) {
+    this.model = config.model ?? "text-embedding-nomic-embed-text-v1.5";
+    // LM Studio default port is 1234, but can be configured
+    this.baseUrl = config.baseUrl ?? "http://127.0.0.1:1234/v1/embeddings";
+    this.apiKey = config.apiKey ?? "not-needed";
+  }
+
+  async embed(text: string): Promise<ReadonlyArray<number>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: text,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`LM Studio embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data[0].embedding;
+  }
+
+  async embedBatch(texts: ReadonlyArray<string>): Promise<ReadonlyArray<ReadonlyArray<number>>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`LM Studio embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data.map((item) => item.embedding);
+  }
+
+  async isAvailable(): Promise<boolean> {
+    try {
+      await this.embed("test");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 class MotaEmbeddingClient implements EmbeddingClient {
   private readonly apiKey: string;
   private readonly model: string;
@@ -203,6 +271,260 @@ class MotaEmbeddingClient implements EmbeddingClient {
 
     const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
     return data.data.map((item) => item.embedding);
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.apiKey.length > 0;
+  }
+}
+
+/**
+ * ModelScope (魔塔社区) Embedding Client
+ * Supports various Chinese embedding models from ModelScope
+ */
+class ModelScopeEmbeddingClient implements EmbeddingClient {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly baseUrl: string;
+
+  constructor(config: VectorModelConfig) {
+    this.apiKey = config.apiKey ?? process.env.MODELSCOPE_API_KEY ?? "";
+    this.model = config.model ?? "iic/nlp_gte_sentence-embedding_chinese-base";
+    this.baseUrl = config.baseUrl ?? "https://api-inference.modelscope.cn/v1/embeddings";
+  }
+
+  async embed(text: string): Promise<ReadonlyArray<number>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: text,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`ModelScope embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data[0].embedding;
+  }
+
+  async embedBatch(texts: ReadonlyArray<string>): Promise<ReadonlyArray<ReadonlyArray<number>>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`ModelScope embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data.map((item) => item.embedding);
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.apiKey.length > 0;
+  }
+}
+
+/**
+ * SiliconFlow Embedding Client
+ * Supports various embedding models from SiliconFlow
+ */
+class SiliconFlowEmbeddingClient implements EmbeddingClient {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly baseUrl: string;
+
+  constructor(config: VectorModelConfig) {
+    this.apiKey = config.apiKey ?? process.env.SILICONFLOW_API_KEY ?? "";
+    this.model = config.model ?? "BAAI/bge-m3";
+    this.baseUrl = config.baseUrl ?? "https://api.siliconflow.cn/v1/embeddings";
+  }
+
+  async embed(text: string): Promise<ReadonlyArray<number>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: text,
+        encoding_format: "float",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`SiliconFlow embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data[0].embedding;
+  }
+
+  async embedBatch(texts: ReadonlyArray<string>): Promise<ReadonlyArray<ReadonlyArray<number>>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+        encoding_format: "float",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`SiliconFlow embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data.map((item) => item.embedding);
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.apiKey.length > 0;
+  }
+}
+
+/**
+ * Zhipu AI (智谱AI) Embedding Client
+ * Supports embedding models from Zhipu AI
+ */
+class ZhipuEmbeddingClient implements EmbeddingClient {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly baseUrl: string;
+
+  constructor(config: VectorModelConfig) {
+    this.apiKey = config.apiKey ?? process.env.ZHIPU_API_KEY ?? "";
+    this.model = config.model ?? "embedding-3";
+    this.baseUrl = config.baseUrl ?? "https://open.bigmodel.cn/api/paas/v4/embeddings";
+  }
+
+  async embed(text: string): Promise<ReadonlyArray<number>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: text,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Zhipu embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data[0].embedding;
+  }
+
+  async embedBatch(texts: ReadonlyArray<string>): Promise<ReadonlyArray<ReadonlyArray<number>>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Zhipu embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { data: Array<{ embedding: ReadonlyArray<number> }> };
+    return data.data.map((item) => item.embedding);
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.apiKey.length > 0;
+  }
+}
+
+/**
+ * DashScope (阿里云灵积) Embedding Client
+ * Supports embedding models from Alibaba Cloud DashScope
+ */
+class DashScopeEmbeddingClient implements EmbeddingClient {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly baseUrl: string;
+
+  constructor(config: VectorModelConfig) {
+    this.apiKey = config.apiKey ?? process.env.DASHSCOPE_API_KEY ?? "";
+    this.model = config.model ?? "text-embedding-v2";
+    this.baseUrl = config.baseUrl ?? "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding";
+  }
+
+  async embed(text: string): Promise<ReadonlyArray<number>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: {
+          texts: [text],
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`DashScope embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { output: { embeddings: Array<{ embedding: ReadonlyArray<number> }> } };
+    return data.output.embeddings[0].embedding;
+  }
+
+  async embedBatch(texts: ReadonlyArray<string>): Promise<ReadonlyArray<ReadonlyArray<number>>> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: {
+          texts: texts,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`DashScope embedding API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { output: { embeddings: Array<{ embedding: ReadonlyArray<number> }> } };
+    return data.output.embeddings.map((item) => item.embedding);
   }
 
   async isAvailable(): Promise<boolean> {
@@ -329,8 +651,18 @@ export function createEmbeddingClient(config: VectorModelConfig): EmbeddingClien
       return new HuggingFaceEmbeddingClient(config);
     case "local":
       return new LocalEmbeddingClient(config);
+    case "lmstudio":
+      return new LMStudioEmbeddingClient(config);
     case "mota":
       return new MotaEmbeddingClient(config);
+    case "modelscope":
+      return new ModelScopeEmbeddingClient(config);
+    case "siliconflow":
+      return new SiliconFlowEmbeddingClient(config);
+    case "zhipu":
+      return new ZhipuEmbeddingClient(config);
+    case "dashscope":
+      return new DashScopeEmbeddingClient(config);
     case "custom":
       return new CustomEmbeddingClient(config);
     default:
