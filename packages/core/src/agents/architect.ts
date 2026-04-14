@@ -263,6 +263,12 @@ ${finalRequirementsPrompt}`;
       { role: "user", content: userMessage },
     ], { maxTokens: 16384, temperature: 0.8 });
 
+    // Save LLM output to temporary file for debugging
+    const cache = new LlmOutputCache(this.ctx.projectRoot);
+    await cache.initialize();
+    const tempFilePath = await cache.savePart(response.content, 0);
+    this.ctx.logger?.info(`[generateFoundation] LLM output saved to: ${tempFilePath}`);
+
     return this.parseSections(response.content);
   }
 
