@@ -146,16 +146,16 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
     setLoading(true);
     setLogs([]);
     setProgress(null);
-    
+
     try {
       const response = await fetch(`/api/books/${bookId}/rag-supplement`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ forceReindex }),
       });
-      
+
       const data = await response.json();
-      
+
       if (data.ok) {
         setLogs(prev => [
           ...prev,
@@ -166,7 +166,7 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
           `补充成功: ${data.results.filter((r: { success: boolean }) => r.success).length} 章`,
           `失败: ${data.results.filter((r: { success: boolean }) => !r.success).length} 章`,
         ]);
-        
+
         // 显示详细结果
         data.results.forEach((result: { chapter: number; success: boolean; error?: string }) => {
           if (result.success) {
@@ -175,7 +175,7 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
             setLogs(prev => [...prev, `✗ 第${result.chapter}章 索引失败: ${result.error || "未知错误"}`]);
           }
         });
-        
+
         // 刷新状态
         await checkStatus();
       } else {
@@ -184,46 +184,43 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
     } catch (e) {
       setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
     }
-    
+
     setLoading(false);
     setProgress(null);
   };
 
   const rebuild = async () => {
-    showConfirmDialog(
-      "确认重建RAG索引",
-      "确定要重建所有RAG索引吗？这将清空现有索引并重新索引所有内容。",
-      async () => {
-        setLoading(true);
-        setLogs([]);
-        
-        try {
-          const response = await fetch(`/api/books/${bookId}/rag-rebuild`, {
-            method: "POST",
-          });
-          
-          const data = await response.json();
-          
-          if (data.ok) {
-            setLogs(prev => [
-              ...prev,
-              `重建完成: 共 ${data.total} 章`,
-              `索引成功: ${data.indexed} 章`,
-              `失败: ${data.failed} 章`,
-            ]);
-            
-            // 刷新状态
-            await checkStatus();
-          } else {
-            setLogs(prev => [...prev, `重建失败: ${data.error || "未知错误"}`]);
-          }
-        } catch (e) {
-          setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
-        }
-        
-        setLoading(false);
+    const confirmed = window.confirm("确定要重建所有RAG索引吗？这将清空现有索引并重新索引所有内容。");
+    if (!confirmed) return;
+
+    setLoading(true);
+    setLogs([]);
+
+    try {
+      const response = await fetch(`/api/books/${bookId}/rag-rebuild`, {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (data.ok) {
+        setLogs(prev => [
+          ...prev,
+          `重建完成: 共 ${data.total} 章`,
+          `索引成功: ${data.indexed} 章`,
+          `失败: ${data.failed} 章`,
+        ]);
+
+        // 刷新状态
+        await checkStatus();
+      } else {
+        setLogs(prev => [...prev, `重建失败: ${data.error || "未知错误"}`]);
       }
-    );
+    } catch (e) {
+      setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
+    }
+
+    setLoading(false);
   };
 
   return (
@@ -858,6 +855,27 @@ export function BookDetail({
           showAlertDialog(e instanceof Error ? e.message : "Failed to delete chapter");
         } finally {
           setDeletingChapters((prev) => prev.filter((n) => n !== chapterNum));
+        }
+      }
+    );
+  };
+
+  const handleRewrite = async (chapterNum: number) => {
+    showConfirmDialog(
+      data?.book.language === "en" ? "Confirm Rewrite Chapter" : "确认重写章节",
+      data?.book.language === "en"
+        ? `Are you sure you want to rewrite chapter ${chapterNum}? This will regenerate the chapter content.`
+        : `确定要重写第 ${chapterNum} 章吗？这将重新生成章节内容。`,
+      async () => {
+        setRewritingChapters((prev) => [...prev, chapterNum]);
+        try {
+          await postApi(`/books/${bookId}/chapters/${chapterNum}/rewrite`, {});
+          showAlertDialog(data?.book.language === "en" ? "Chapter rewrite started" : "章节重写已开始");
+          refetch();
+        } catch (e) {
+          showAlertDialog(e instanceof Error ? e.message : "Failed to rewrite chapter");
+        } finally {
+          setRewritingChapters((prev) => prev.filter((n) => n !== chapterNum));
         }
       }
     );
