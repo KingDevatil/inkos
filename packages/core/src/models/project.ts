@@ -75,20 +75,20 @@ export type InputGovernanceMode = z.infer<typeof InputGovernanceModeSchema>;
 
 const ModelOverrideValueSchema = z.union([z.string(), AgentLLMOverrideSchema]);
 
+export const VectorModelConfigSchema = z.object({
+  type: z.string(),
+  model: z.string().optional(),
+  baseUrl: z.string().optional(),
+  apiKey: z.string().optional(),
+  dimensions: z.number().optional(),
+});
+
 export const VectorRetrievalConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  modelType: z.string().optional(),
-  modelName: z.string().optional(),
-  baseUrl: z.string().optional(),
+  model: VectorModelConfigSchema.optional(),
   topK: z.number().int().optional(),
   minScore: z.number().optional(),
   storePath: z.string().optional(),
-  openaiApiKey: z.string().optional(),
-  siliconflowApiKey: z.string().optional(),
-  motaApiKey: z.string().optional(),
-  modelscopeApiKey: z.string().optional(),
-  zhipuApiKey: z.string().optional(),
-  dashscopeApiKey: z.string().optional(),
 });
 
 export type VectorRetrievalConfig = z.infer<typeof VectorRetrievalConfigSchema>;
