@@ -93,11 +93,21 @@ export function createLogger(options: {
   const { tag, sinks, baseCtx } = options;
 
   function emit(level: LogLevel, msg: string, ctx?: Record<string, unknown>): void {
+    const now = new Date();
+    const timestamp = now.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
     const entry: LogEntry = {
       level,
       tag,
       message: msg,
-      timestamp: new Date().toISOString(),
+      timestamp,
       ...(ctx || baseCtx
         ? { ctx: { ...baseCtx, ...ctx } }
         : {}),
