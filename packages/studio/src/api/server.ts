@@ -2229,6 +2229,104 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // Re-parse volume outline and update volume plans (useful after outline rewrite)
+  app.post("/api/books/:id/reparse-volume-plans", async (c) => {
+    const id = c.req.param("id");
+    
+    broadcast("volume-plans:reparse:start", { bookId: id });
+    
+    try {
+      // Clear cached metadata to force re-parse
+      if (volumePlansMeta[id]) {
+        delete volumePlansMeta[id];
+      }
+      
+      // Delete metadata file
+      try {
+        const pipeline = new PipelineRunner(await buildPipelineConfig());
+        const bookDir = pipeline["state"].bookDir(id);
+        const bookMetaPath = join(bookDir, "story", ".volume-plans-meta.json");
+        if (existsSync(bookMetaPath)) {
+          await unlink(bookMetaPath);
+        }
+      } catch (e) {
+        console.warn("Failed to delete old metadata:", e);
+      }
+      
+      // Re-initialize metadata (will re-parse from volume_outline.md)
+      await initVolumePlansMeta();
+      
+      // Now the GET /api/books/:id/volume-plans will re-parse automatically
+      // We just need to trigger it by calling the same logic
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const book = await pipeline["state"].loadBookConfig(id);
+      const bookDir = pipeline["state"].bookDir(id);
+      const outlinePath = join(bookDir, "story", "volume_outline.md");
+      
+      const outlineContent = await readFile(outlinePath, "utf-8");
+      
+      // 使用 ArchitectAgent 辅助解析卷纲
+      const { ArchitectAgent } = await import("@actalk/inkos-core");
+      const ctx = {
+        client: createLLMClient(cachedConfig.llm),
+        model: cachedConfig.llm.model,
+        projectRoot: root,
+        bookId: id,
+        logger: createLogger({ tag: "architect", sinks: [sseSink] }),
+      };
+      const architect = new ArchitectAgent(ctx);
+      
+      // 调用 ArchitectAgent 解析卷纲
+      const parsedResult = await architect.parseVolumeOutline(outlineContent);
+      
+      // Check for existing volume detail files and update metadata
+      const volumePlansWithStatus = await Promise.all(parsedResult.volumePlans.map(async (vp: any) => {
+        const volumeDetailPath = join(bookDir, "story", `volume_${vp.volumeId}_detail.md`);
+        let detailOutlineGenerated = false;
+        let detailOutlineFile: string | undefined;
+        
+        try {
+          await stat(volumeDetailPath);
+          detailOutlineGenerated = true;
+          detailOutlineFile = `volume_${vp.volumeId}_detail.md`;
+        } catch {
+          detailOutlineGenerated = false;
+        }
+        
+        return {
+          volumeId: vp.volumeId,
+          title: vp.title,
+          chapterRange: vp.chapterRange,
+          detailOutlineGenerated,
+          detailOutlineFile,
+          lastGeneratedAt: detailOutlineGenerated ? new Date().toISOString() : undefined
+        };
+      }));
+      
+      // Save metadata to persistent storage
+      volumePlansMeta[id] = {
+        volumePlans: volumePlansWithStatus,
+        lastParsedAt: new Date().toISOString()
+      };
+      await saveVolumePlansMeta(id);
+      
+      broadcast("volume-plans:reparse:complete", { 
+        bookId: id, 
+        volumeCount: volumePlansWithStatus.length 
+      });
+      
+      return c.json({ 
+        ok: true, 
+        message: `已根据最新卷纲重新拆分为 ${volumePlansWithStatus.length} 个分卷`,
+        volumePlans: volumePlansWithStatus
+      });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      broadcast("volume-plans:reparse:error", { bookId: id, error });
+      return c.json({ error }, 500);
+    }
+  });
+
   // Get specific volume outline
   app.get("/api/books/:id/volumes/:volumeId/outline", async (c) => {
     const id = c.req.param("id");

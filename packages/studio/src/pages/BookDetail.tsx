@@ -436,6 +436,7 @@ export function BookDetail({
   const [showVolumeOutlinePreview, setShowVolumeOutlinePreview] = useState(false);
   const [volumePlans, setVolumePlans] = useState<any>(null);
   const [loadingVolumePlans, setLoadingVolumePlans] = useState(false);
+  const [reparsingVolumePlans, setReparsingVolumePlans] = useState(false);
   const [activeTab, setActiveTab] = useState<"chapters" | "volume-plans">('chapters');
   
   // Volume outline modal states
@@ -483,6 +484,30 @@ export function BookDetail({
     } finally {
       setLoadingVolumePlans(false);
     }
+  };
+
+  // 重新根据卷纲拆分分卷（用于重写大纲后）
+  const reparseVolumePlans = async () => {
+    showConfirmDialog(
+      '确认重新拆分分卷',
+      '确定要根据最新的卷纲重新拆分分卷吗？\n\n这将：\n1. 重新解析 volume_outline.md\n2. 根据最新卷纲更新分卷结构\n3. 保留已有的分卷详细卷纲文件（如果存在）\n\n注意：如果卷数发生变化（如从7卷变为5卷），多余的分卷将被移除。',
+      async () => {
+        setReparsingVolumePlans(true);
+        try {
+          const response = await postApi(`/books/${bookId}/reparse-volume-plans`);
+          setVolumePlans(response.volumePlans);
+          // Check detail outline for each volume
+          for (const volume of response.volumePlans) {
+            await checkVolumeDetailOutline(volume.volumeId);
+          }
+          showAlertDialog(`已成功重新拆分为 ${response.volumePlans.length} 个分卷`);
+        } catch (e) {
+          showAlertDialog(e instanceof Error ? e.message : '重新拆分分卷失败');
+        } finally {
+          setReparsingVolumePlans(false);
+        }
+      }
+    );
   };
 
   // Custom confirm dialog helper
@@ -1330,6 +1355,19 @@ export function BookDetail({
                     <span className="font-bold">卷纲管理</span>
                   </div>
                   <div className="flex gap-2">
+                    <button
+                      onClick={reparseVolumePlans}
+                      disabled={reparsingVolumePlans}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-all disabled:opacity-50"
+                      title="重写大纲后使用：根据最新的 volume_outline.md 重新拆分分卷"
+                    >
+                      {reparsingVolumePlans ? (
+                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <RefreshCw size={16} />
+                      )}
+                      重新拆分分卷
+                    </button>
                     <button
                       onClick={generateAllVolumeDetailOutlines}
                       className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/80 transition-all"
