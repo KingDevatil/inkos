@@ -100,6 +100,26 @@ export async function loadProjectConfig(
   // Global language override
   if (env.INKOS_DEFAULT_LANGUAGE) config.language = env.INKOS_DEFAULT_LANGUAGE;
 
+  // Vector Retrieval (RAG) config from env
+  const vectorRetrieval = (config.vectorRetrieval ?? {}) as Record<string, unknown>;
+  if (env.RAG_ENABLED === "true") {
+    vectorRetrieval.enabled = true;
+    if (env.RAG_MODEL_TYPE) vectorRetrieval.modelType = env.RAG_MODEL_TYPE;
+    if (env.RAG_MODEL_NAME) vectorRetrieval.modelName = env.RAG_MODEL_NAME;
+    if (env.RAG_BASE_URL) vectorRetrieval.baseUrl = env.RAG_BASE_URL;
+    if (env.RAG_TOP_K) vectorRetrieval.topK = parseInt(env.RAG_TOP_K, 10);
+    if (env.RAG_MIN_SCORE) vectorRetrieval.minScore = parseFloat(env.RAG_MIN_SCORE);
+    if (env.RAG_STORE_PATH) vectorRetrieval.storePath = env.RAG_STORE_PATH;
+    // API keys for different providers
+    if (env.OPENAI_API_KEY) vectorRetrieval.openaiApiKey = env.OPENAI_API_KEY;
+    if (env.SILICONFLOW_API_KEY) vectorRetrieval.siliconflowApiKey = env.SILICONFLOW_API_KEY;
+    if (env.MOTA_API_KEY) vectorRetrieval.motaApiKey = env.MOTA_API_KEY;
+    if (env.MODELSCOPE_API_KEY) vectorRetrieval.modelscopeApiKey = env.MODELSCOPE_API_KEY;
+    if (env.ZHIPU_API_KEY) vectorRetrieval.zhipuApiKey = env.ZHIPU_API_KEY;
+    if (env.DASHSCOPE_API_KEY) vectorRetrieval.dashscopeApiKey = env.DASHSCOPE_API_KEY;
+    config.vectorRetrieval = vectorRetrieval;
+  }
+
   // API key ONLY from env — never stored in inkos.json
   const apiKey = env.INKOS_LLM_API_KEY;
   const provider = typeof llm.provider === "string" ? llm.provider : undefined;
