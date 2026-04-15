@@ -71,10 +71,7 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
             }
             const id = bookId || `book-${Date.now().toString(36)}`;
             progress(`Starting architect for book "${id}"...`);
-            await pipeline.initBook(
-              { id, genre: "general", title: "", language: "zh" } as any,
-              { externalContext: instruction },
-            );
+            await pipeline.initBook({ id, genre: "general", title: "", language: "zh" } as any);
             progress(`Architect finished — book "${id}" foundation created.`);
             return textResult(`Book "${id}" initialised successfully. Foundation files are ready.`);
           }
