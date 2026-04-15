@@ -190,38 +190,40 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
   };
 
   const rebuild = async () => {
-    if (!confirm("确定要重建所有RAG索引吗？这将清空现有索引并重新索引所有内容。")) {
-      return;
-    }
-    
-    setLoading(true);
-    setLogs([]);
-    
-    try {
-      const response = await fetch(`/api/books/${bookId}/rag-rebuild`, {
-        method: "POST",
-      });
-      
-      const data = await response.json();
-      
-      if (data.ok) {
-        setLogs(prev => [
-          ...prev,
-          `重建完成: 共 ${data.total} 章`,
-          `索引成功: ${data.indexed} 章`,
-          `失败: ${data.failed} 章`,
-        ]);
+    showConfirmDialog(
+      "确认重建RAG索引",
+      "确定要重建所有RAG索引吗？这将清空现有索引并重新索引所有内容。",
+      async () => {
+        setLoading(true);
+        setLogs([]);
         
-        // 刷新状态
-        await checkStatus();
-      } else {
-        setLogs(prev => [...prev, `重建失败: ${data.error || "未知错误"}`]);
+        try {
+          const response = await fetch(`/api/books/${bookId}/rag-rebuild`, {
+            method: "POST",
+          });
+          
+          const data = await response.json();
+          
+          if (data.ok) {
+            setLogs(prev => [
+              ...prev,
+              `重建完成: 共 ${data.total} 章`,
+              `索引成功: ${data.indexed} 章`,
+              `失败: ${data.failed} 章`,
+            ]);
+            
+            // 刷新状态
+            await checkStatus();
+          } else {
+            setLogs(prev => [...prev, `重建失败: ${data.error || "未知错误"}`]);
+          }
+        } catch (e) {
+          setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
+        }
+        
+        setLoading(false);
       }
-    } catch (e) {
-      setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
-    }
-    
-    setLoading(false);
+    );
   };
 
   return (

@@ -104,19 +104,52 @@ export async function loadProjectConfig(
   const vectorRetrieval = (config.vectorRetrieval ?? {}) as Record<string, unknown>;
   if (env.RAG_ENABLED === "true") {
     vectorRetrieval.enabled = true;
-    if (env.RAG_MODEL_TYPE) vectorRetrieval.modelType = env.RAG_MODEL_TYPE;
-    if (env.RAG_MODEL_NAME) vectorRetrieval.modelName = env.RAG_MODEL_NAME;
-    if (env.RAG_BASE_URL) vectorRetrieval.baseUrl = env.RAG_BASE_URL;
+    
+    // Build VectorModelConfig from env
+    const modelType = env.RAG_MODEL_TYPE || "openai";
+    const modelName = env.RAG_MODEL_NAME;
+    const baseUrl = env.RAG_BASE_URL;
+    
+    // Get API key based on model type
+    let apiKey: string | undefined;
+    switch (modelType) {
+      case "openai":
+        apiKey = env.OPENAI_API_KEY;
+        break;
+      case "siliconflow":
+        apiKey = env.SILICONFLOW_API_KEY;
+        break;
+      case "mota":
+        apiKey = env.MOTA_API_KEY;
+        break;
+      case "modelscope":
+        apiKey = env.MODELSCOPE_API_KEY;
+        break;
+      case "zhipu":
+        apiKey = env.ZHIPU_API_KEY;
+        break;
+      case "dashscope":
+        apiKey = env.DASHSCOPE_API_KEY;
+        break;
+      case "lmstudio":
+      case "ollama":
+        // Local models don't need API key
+        apiKey = undefined;
+        break;
+    }
+    
+    // Set model config
+    vectorRetrieval.model = {
+      type: modelType,
+      model: modelName,
+      ...(baseUrl && { baseUrl }),
+      ...(apiKey && { apiKey }),
+    };
+    
     if (env.RAG_TOP_K) vectorRetrieval.topK = parseInt(env.RAG_TOP_K, 10);
     if (env.RAG_MIN_SCORE) vectorRetrieval.minScore = parseFloat(env.RAG_MIN_SCORE);
     if (env.RAG_STORE_PATH) vectorRetrieval.storePath = env.RAG_STORE_PATH;
-    // API keys for different providers
-    if (env.OPENAI_API_KEY) vectorRetrieval.openaiApiKey = env.OPENAI_API_KEY;
-    if (env.SILICONFLOW_API_KEY) vectorRetrieval.siliconflowApiKey = env.SILICONFLOW_API_KEY;
-    if (env.MOTA_API_KEY) vectorRetrieval.motaApiKey = env.MOTA_API_KEY;
-    if (env.MODELSCOPE_API_KEY) vectorRetrieval.modelscopeApiKey = env.MODELSCOPE_API_KEY;
-    if (env.ZHIPU_API_KEY) vectorRetrieval.zhipuApiKey = env.ZHIPU_API_KEY;
-    if (env.DASHSCOPE_API_KEY) vectorRetrieval.dashscopeApiKey = env.DASHSCOPE_API_KEY;
+    
     config.vectorRetrieval = vectorRetrieval;
   }
 
