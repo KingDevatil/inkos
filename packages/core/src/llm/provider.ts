@@ -306,6 +306,11 @@ function wrapLLMError(error: unknown, context?: { readonly baseUrl?: string; rea
       `API 返回 429 (请求过多)。请稍后重试，或检查 API 配额。${ctxLine}`,
     );
   }
+  if (msg.includes("529") || msg.includes("服务集群负载较高") || msg.includes("负载较高")) {
+    return new Error(
+      `API 返回 529 (服务集群负载过高)。服务器当前负载过高，请稍后重试。${ctxLine}`,
+    );
+  }
   if (msg.includes("Connection error") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND") || msg.includes("fetch failed")) {
     return new Error(
       `无法连接到 API 服务。可能原因：\n` +
