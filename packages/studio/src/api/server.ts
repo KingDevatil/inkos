@@ -1881,6 +1881,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       
       // 重新索引基础设定
       const foundationFiles = ["story_bible.md", "volume_outline.md", "book_rules.md"];
+      const foundationDocumentIds: string[] = [];
       for (const file of foundationFiles) {
         try {
           const content = await readFile(join(bookDir, "story", file), "utf-8");
@@ -1890,9 +1891,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
             category: file.replace(".md", ""),
           });
           await (ragManager as any).vectorStore.addChunks(chunks);
+          // 收集文档ID用于更新状态
+          foundationDocumentIds.push(...chunks.map((c: { id: string }) => c.id));
         } catch {
           // 文件可能不存在，跳过
         }
+      }
+      // 更新基础设定索引状态
+      if (foundationDocumentIds.length > 0) {
+        await statusManager.markFoundationIndexed(foundationDocumentIds);
       }
       
       // 重新索引所有章节
