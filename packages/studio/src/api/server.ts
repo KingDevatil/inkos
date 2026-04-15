@@ -4441,7 +4441,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // --- Regenerate Foundation (for book creation flow) ---
   app.post("/api/books/:id/regenerate-foundation", async (c) => {
     const id = c.req.param("id");
-    const { genre, brief, intent } = await c.req.json<{ genre?: string; brief?: string; intent?: string }>();
+    const { genre, brief, intent, clearChapters } = await c.req.json<{ genre?: string; brief?: string; intent?: string; clearChapters?: boolean }>();
 
     // Support both genre-based and intent-based regeneration
     if (!genre && !intent) {
@@ -4468,12 +4468,52 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
       await state.saveBookConfig(id, updatedBook);
 
+      // 如果用户选择清理章节，删除所有已有章节和状态文件
+      if (clearChapters) {
+        const bookDir = state.bookDir(id);
+        const chaptersDir = join(bookDir, "chapters");
+        const storyDir = join(bookDir, "story");
+
+        try {
+          // 清理章节文件
+          const chapterFiles = await readdir(chaptersDir).catch(() => [] as string[]);
+          for (const file of chapterFiles) {
+            if (file.endsWith(".md")) {
+              await unlink(join(chaptersDir, file));
+            }
+          }
+
+          // 清理状态文件（保留基础设定文件）
+          const stateFilesToRemove = [
+            "chapter_summaries.md",
+            "subplot_board.md",
+            "emotional_arcs.md",
+            "character_matrix.md",
+            "particle_ledger.md",
+          ];
+          for (const file of stateFilesToRemove) {
+            try {
+              await unlink(join(storyDir, file));
+            } catch {
+              // 文件可能不存在，忽略错误
+            }
+          }
+
+          // 重置章节索引
+          await state.saveChapterIndex(id, []);
+
+          broadcast("foundation:regenerate:progress", { bookId: id, message: "已清理已有章节" });
+        } catch (e) {
+          broadcast("foundation:regenerate:progress", { bookId: id, message: `清理章节时出错: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      }
+
       const pipeline = new PipelineRunner(await buildPipelineConfig({ externalContext: brief || intent }));
       const result = await pipeline.regenerateFoundation(updatedBook, brief || intent);
 
       runStore.succeed(run.id, { bookId: id, result });
       broadcast("foundation:regenerate:complete", { bookId: id, runId: run.id });
-      return c.json({ ok: true, bookId: id, runId: run.id, result });
+      return c.json({ ok: true, bookId: id, runId: run.id, result, chaptersCleared: clearChapters });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       runStore.fail(run.id, error);
