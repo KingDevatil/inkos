@@ -179,7 +179,10 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
         // 刷新状态
         await checkStatus();
       } else {
-        setLogs(prev => [...prev, `补充失败: ${data.error || "未知错误"}`]);
+        const errorMsg = data.error || "未知错误";
+        const details = data.details || "";
+        const config = data.config ? `\n配置: ${JSON.stringify(data.config, null, 2)}` : "";
+        setLogs(prev => [...prev, `补充失败: ${errorMsg}${details ? "\n" + details : ""}${config}`]);
       }
     } catch (e) {
       setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
@@ -214,7 +217,10 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
         // 刷新状态
         await checkStatus();
       } else {
-        setLogs(prev => [...prev, `重建失败: ${data.error || "未知错误"}`]);
+        const errorMsg = data.error || "未知错误";
+        const details = data.details || "";
+        const config = data.config ? `\n配置: ${JSON.stringify(data.config, null, 2)}` : "";
+        setLogs(prev => [...prev, `重建失败: ${errorMsg}${details ? "\n" + details : ""}${config}`]);
       }
     } catch (e) {
       setLogs(prev => [...prev, `请求失败: ${e instanceof Error ? e.message : String(e)}`]);
