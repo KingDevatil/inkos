@@ -822,7 +822,7 @@ export function BookDetail({
     const message = data?.book.language === "en"
       ? "Optional revise brief for this run only. Leave blank to use existing focus."
       : "可选：输入这次修订要遵循的补充想法。留空则沿用现有 focus。";
-    
+
     openInputDialog(title, message, "", async (brief) => {
       if (brief === null) return;
       setRevisingChapters((prev) => [...prev, chapterNum]);
@@ -839,6 +839,26 @@ export function BookDetail({
         setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
       }
     });
+  };
+
+  const handleDeleteChapter = async (chapterNum: number) => {
+    showConfirmDialog(
+      data?.book.language === "en" ? "Confirm Delete Chapter" : "确认删除章节",
+      data?.book.language === "en"
+        ? `Are you sure you want to delete chapter ${chapterNum}? This action cannot be undone.`
+        : `确定要删除第 ${chapterNum} 章吗？此操作不可撤销。`,
+      async () => {
+        setDeletingChapters((prev) => [...prev, chapterNum]);
+        try {
+          await fetchJson(`/books/${bookId}/chapters/${chapterNum}`, { method: "DELETE" });
+          refetch();
+        } catch (e) {
+          showAlertDialog(e instanceof Error ? e.message : "Failed to delete chapter");
+        } finally {
+          setDeletingChapters((prev) => prev.filter((n) => n !== chapterNum));
+        }
+      }
+    );
   };
 
   const loadAuditConfig = async () => {
@@ -1330,6 +1350,16 @@ export function BookDetail({
                           <option value="rework">{t("book.rework")}</option>
                           <option value="anti-detect">{t("book.antiDetect")}</option>
                         </select>
+                        <button
+                          onClick={() => handleDeleteChapter(ch.number)}
+                          disabled={deletingChapters.includes(ch.number)}
+                          className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all shadow-sm disabled:opacity-50"
+                          title={t("book.delete")}
+                        >
+                          {deletingChapters.includes(ch.number)
+                            ? <div className="w-3.5 h-3.5 border-2 border-destructive/20 border-t-destructive rounded-full animate-spin" />
+                            : <Trash2 size={14} />}
+                        </button>
                       </div>
                     </td>
                   </tr>
