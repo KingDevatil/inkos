@@ -946,29 +946,40 @@ ${trimmed}\n`;
     const bookRules = await this.readFileSafe(join(bookDir, "story/book_rules.md"));
 
     const systemPrompt = resolvedLanguage === "en"
-      ? `You are a professional web fiction architect. Your task is to generate a detailed outline for a specific volume.
+      ? `You are a professional web fiction architect. Your task is to generate a detailed outline for a specific volume based on the overall story plan.
 
-## Story Bible
+## Story Bible (Core Settings)
 ${storyBible}
 
 ## Book Rules
 ${bookRules}
 
-## Volume Outline
+## Overall Volume Outline (Full Story Plan)
 ${existingOutline}
 
-## Target Volume
+## Target Volume (Basic Info)
 ${targetVolumeInfo}
 
-## Requirements
-1. Generate a detailed outline for the target volume
-2. Include chapter-by-chapter breakdown (3-5 chapters per group)
-3. Define core conflicts, turning points, and payoff goals for each chapter group
-4. Ensure smooth transitions between chapters
-5. Follow the golden first three chapters rule if this is volume 1
-6. Maintain consistency with the story bible and book rules
-7. Include character development arcs within the volume
-8. Define cliffhangers for each chapter group
+## Important Instructions
+1. **Based on Overall Plan**: The target volume's detailed outline must strictly follow the overall volume outline's plot direction and major events. Do not deviate from the overall story plan.
+
+2. **Expand and Detail**: The target volume info above may be brief. Your job is to expand it into a detailed, chapter-by-chapter outline (3-5 chapters per group) with specific events, conflicts, and developments.
+
+3. **Chapter Planning**: For each chapter group, define:
+   - Core events and plot progression
+   - Key turning points that drive the story forward
+   - Payoff goals and reader satisfaction moments
+   - Cliffhangers to maintain engagement
+
+4. **Consistency Requirements**:
+   - Maintain consistency with story bible and book rules
+   - Ensure smooth transitions between chapters
+   - Connect logically with previous and next volumes (as outlined in the overall plan)
+   - Follow the golden first three chapters rule if this is volume 1
+
+5. **Character Development**: Include character arcs and growth within this volume that align with the overall story plan.
+
+6. **Volume Positioning**: Understand this volume's role in the overall story - is it setup, rising action, climax, or resolution? Adjust pacing accordingly.
 
 Output only the detailed volume outline in Markdown format, using the following structure:
 
@@ -976,43 +987,63 @@ Output only the detailed volume outline in Markdown format, using the following 
 
 **Chapter Range**: {start}-{end}
 
-**Core Conflict**: {conflict}
+**Volume Positioning**: {This volume's role in the overall story arc}
+
+**Core Conflict**: {Main conflict of this volume}
+
+**Key Turning Points**:
+- Turning point 1: ...
+- Turning point 2: ...
 
 **Chapter Groups**:
 - Chapters {start}-{start+2}: {group1 title}
   - Core events: ...
-  - Turning points: ...
+  - Key turning points: ...
+  - Payoff goals: ...
   - Cliffhanger: ...
   
 - Chapters {start+3}-{start+5}: {group2 title}
   - ...
 
-**Character Development**: {character arcs}
+**Character Development**: {Character arcs within this volume}
 
-**Payoff Goals**: {goals}`
-      : `你是一个专业的网络小说架构师。你的任务是为特定分卷生成详细的卷纲。
+**Payoff Goals**: {Reader satisfaction goals for this volume}
 
-## 故事设定
+**Connection to Overall Plot**: {How this volume advances the overall story}`
+      : `你是一个专业的网络小说架构师。你的任务是基于整体故事规划，为特定分卷生成详细的卷纲。
+
+## 故事设定（核心设定）
 ${storyBible}
 
 ## 书籍规则
 ${bookRules}
 
-## 总体卷纲
+## 总体卷纲（完整故事规划）
 ${existingOutline}
 
-## 目标分卷
+## 目标分卷（基础信息）
 ${targetVolumeInfo}
 
-## 要求
-1. 生成目标分卷的详细卷纲
-2. 包含逐章分解（每 3-5 章为一组）
-3. 为每组章节定义核心冲突、转折点和收益目标
-4. 确保章节间的过渡自然流畅
-5. 如果是第一卷，遵循黄金三章法则
-6. 保持与故事设定和书籍规则的一致性
-7. 包含本卷内的角色发展弧线
-8. 为每组章节定义悬念钩子
+## 重要说明
+1. **基于整体规划**：目标分卷的详细卷纲必须严格遵循总体卷纲的剧情走向和重大事件安排，不得偏离整体故事规划。
+
+2. **扩展细化**：上面的目标分卷信息可能比较简略，你的任务是将其扩展为详细的逐章卷纲（每 3-5 章为一组），包含具体的事件、冲突和发展。
+
+3. **章节规划**：为每组章节定义：
+   - 核心事件和剧情推进
+   - 推动故事前进的关键转折点
+   - 收益目标和读者爽点
+   - 维持阅读兴趣的悬念钩子
+
+4. **一致性要求**：
+   - 保持与故事设定和书籍规则的一致性
+   - 确保章节间过渡自然流畅
+   - 与前后卷逻辑衔接（按照总体卷纲的规划）
+   - 如果是第一卷，遵循黄金三章法则
+
+5. **角色发展**：包含本卷内的角色弧线和成长，但要符合整体故事规划。
+
+6. **分卷定位**：理解本分卷在整体故事中的定位——是铺垫、发展、高潮还是结局？相应调整节奏。
 
 只输出详细的分卷卷纲，使用 Markdown 格式，结构如下：
 
@@ -1020,20 +1051,29 @@ ${targetVolumeInfo}
 
 **章节范围**：{start}-{end}
 
-**核心冲突**：{冲突}
+**分卷定位**：{本分卷在整体故事线中的角色}
+
+**核心冲突**：{本分卷的主要冲突}
+
+**关键转折点**：
+- 转折点1：...
+- 转折点2：...
 
 **章节分组**：
 - 第{start}-{start+2} 章：{第一组标题}
   - 核心事件：...
   - 关键转折：...
+  - 收益目标：...
   - 悬念钩子：...
   
 - 第{start+3}-{start+5} 章：{第二组标题}
   - ...
 
-**角色发展**：{角色弧线}
+**角色发展**：{本分卷内的角色弧线}
 
-**收益目标**：{目标}`;
+**收益目标**：{本分卷的读者爽点目标}
+
+**与主线的关联**：{本分卷如何推进整体故事}`;
 
     const response = await this.chat([
       { role: "system", content: systemPrompt },
