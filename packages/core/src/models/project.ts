@@ -75,6 +75,24 @@ export type InputGovernanceMode = z.infer<typeof InputGovernanceModeSchema>;
 
 const ModelOverrideValueSchema = z.union([z.string(), AgentLLMOverrideSchema]);
 
+export const VectorRetrievalConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  modelType: z.string().optional(),
+  modelName: z.string().optional(),
+  baseUrl: z.string().optional(),
+  topK: z.number().int().optional(),
+  minScore: z.number().optional(),
+  storePath: z.string().optional(),
+  openaiApiKey: z.string().optional(),
+  siliconflowApiKey: z.string().optional(),
+  motaApiKey: z.string().optional(),
+  modelscopeApiKey: z.string().optional(),
+  zhipuApiKey: z.string().optional(),
+  dashscopeApiKey: z.string().optional(),
+});
+
+export type VectorRetrievalConfig = z.infer<typeof VectorRetrievalConfigSchema>;
+
 export const ProjectConfigSchema = z.object({
   name: z.string().min(1),
   version: z.literal("0.1.0"),
@@ -84,6 +102,7 @@ export const ProjectConfigSchema = z.object({
   detection: DetectionConfigSchema.optional(),
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
   inputGovernanceMode: InputGovernanceModeSchema.default("v2"),
+  vectorRetrieval: VectorRetrievalConfigSchema.optional(),
   daemon: z.object({
     schedule: z.object({
       radarCron: z.string().default("0 */6 * * *"),

@@ -1,6 +1,7 @@
 import type { LLMClient, OnStreamProgress } from "../llm/provider.js";
 import { chatCompletion, createLLMClient } from "../llm/provider.js";
 import type { Logger } from "../utils/logger.js";
+import { loadProjectConfig } from "../utils/config-loader.js";
 import type { BookConfig, FanficMode } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import type { NotifyChannel, LLMConfig, AgentLLMOverride, InputGovernanceMode } from "../models/project.js";
@@ -703,7 +704,7 @@ ${historicalIssues}
   private async getRAGManager(bookId: string): Promise<RAGManager | null> {
     try {
       const bookDir = this.state.bookDir(bookId);
-      const projectConfig = await this.state.loadProjectConfig();
+      const projectConfig = await loadProjectConfig(this.config.projectRoot, { requireApiKey: false });
       const vectorRetrievalConfig = projectConfig.vectorRetrieval as VectorRetrievalConfig | undefined;
       
       if (!vectorRetrievalConfig || !vectorRetrievalConfig.enabled) {
