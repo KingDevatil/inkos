@@ -189,6 +189,20 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
     setProgress(null);
   };
 
+  // Custom confirm dialog helper - defined early for use in RAG modal
+  const showConfirmDialog = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmTitle(title);
+    setConfirmMessage(message);
+    setConfirmCallback(() => onConfirm);
+    setShowConfirm(true);
+  };
+
+  // Custom alert dialog helper
+  const showAlertDialog = (message: string) => {
+    setAlertMessage(message);
+    setShowAlert(true);
+  };
+
   const rebuild = async () => {
     showConfirmDialog(
       "确认重建RAG索引",
@@ -510,20 +524,6 @@ export function BookDetail({
         }
       }
     );
-  };
-
-  // Custom confirm dialog helper
-  const showConfirmDialog = (title: string, message: string, onConfirm: () => void) => {
-    setConfirmTitle(title);
-    setConfirmMessage(message);
-    setConfirmCallback(() => onConfirm);
-    setShowConfirm(true);
-  };
-
-  // Custom alert dialog helper
-  const showAlertDialog = (message: string) => {
-    setAlertMessage(message);
-    setShowAlert(true);
   };
 
   // Custom input dialog helper
