@@ -216,6 +216,65 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
       required: ["bookId", "fileName", "content"],
     },
   },
+  {
+    name: "list_volumes",
+    description: "列出书籍的所有卷（分卷）信息，包括卷ID、标题、章节范围、是否有详细卷纲等。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+      },
+      required: ["bookId"],
+    },
+  },
+  {
+    name: "get_volume_detail",
+    description: "获取指定卷的详细信息，包括卷纲内容、章节范围、详细卷纲（如果已生成）等。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        volumeId: { type: "number", description: "卷ID（如 1, 2, 3）" },
+      },
+      required: ["bookId", "volumeId"],
+    },
+  },
+  {
+    name: "generate_volume_detail",
+    description: "使用 ArchitectAgent 为指定卷生成详细卷纲（包含章节分组、角色发展、情节转折等）。这会创建 volume_{volumeId}_detail.md 文件。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        volumeId: { type: "number", description: "卷ID（如 1, 2, 3）" },
+      },
+      required: ["bookId", "volumeId"],
+    },
+  },
+  {
+    name: "regenerate_volume_outline",
+    description: "重新生成整书的卷纲（volume_outline.md）。这会基于当前的书籍设定重新规划分卷结构。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        authorIntent: { type: "string", description: "作者意图/修改需求（可选）" },
+        rewriteLevel: { type: "string", enum: ["low", "medium", "high"], description: "重写程度（默认medium）" },
+      },
+      required: ["bookId"],
+    },
+  },
+  {
+    name: "confirm_outline",
+    description: "确认卷纲更新。将临时卷纲文件（volume_outline.temp.md）替换为正式卷纲文件（volume_outline.md）。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+      },
+      required: ["bookId"],
+    },
+  },
 ];
 
 export interface AgentLoopOptions {
@@ -261,6 +320,11 @@ export async function runAgentLoop(
 | import_canon | 从正传导入正典参照，启用番外模式 |
 | import_chapters | 【整书重导】导入全部已有章节并重建真相文件 |
 | write_truth_file | 【整文件覆盖】替换真相文件内容，不能用来改章节进度 |
+| list_volumes | 列出书籍的所有卷（分卷）信息 |
+| get_volume_detail | 获取指定卷的详细信息和卷纲 |
+| generate_volume_detail | 为指定卷生成详细卷纲（包含章节分组、角色发展等） |
+| regenerate_volume_outline | 重新生成整书的卷纲结构 |
+| confirm_outline | 确认卷纲更新（将临时文件转为正式文件） |
 
 ## 长期记忆
 
@@ -593,6 +657,181 @@ export async function executeAgentTool(
         written: true,
         size: content.length,
       });
+    }
+
+    case "list_volumes": {
+      const bookId = args.bookId as string;
+      const bookDir = state.bookDir(bookId);
+      const { join } = await import("node:path");
+      const { readFile, stat } = await import("node:fs/promises");
+      
+      try {
+        // Read volume outline file
+        const outlinePath = join(bookDir, "story", "volume_outline.md");
+        const outlineContent = await readFile(outlinePath, "utf-8");
+        
+        // Parse volumes from outline
+        const volumeRegex = /### 第(\d+)卷\s*([^\n]*)[\s\S]*?章节范围[：:](\d+)-(\d+)/g;
+        const volumes = [];
+        let match;
+        
+        while ((match = volumeRegex.exec(outlineContent)) !== null) {
+          const volumeId = parseInt(match[1], 10);
+          const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+          let hasDetail = false;
+          try {
+            await stat(detailPath);
+            hasDetail = true;
+          } catch {
+            hasDetail = false;
+          }
+          
+          volumes.push({
+            volumeId,
+            title: match[2]?.trim() || `第${volumeId}卷`,
+            chapterRange: {
+              start: parseInt(match[3], 10),
+              end: parseInt(match[4], 10),
+            },
+            hasDetailOutline: hasDetail,
+          });
+        }
+        
+        return JSON.stringify({
+          bookId,
+          volumes,
+          totalVolumes: volumes.length,
+        });
+      } catch (err: unknown) {
+        return JSON.stringify({ error: `Failed to list volumes: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    }
+
+    case "get_volume_detail": {
+      const bookId = args.bookId as string;
+      const volumeId = args.volumeId as number;
+      const bookDir = state.bookDir(bookId);
+      const { join } = await import("node:path");
+      const { readFile, stat } = await import("node:fs/promises");
+      
+      try {
+        // Read main volume outline
+        const outlinePath = join(bookDir, "story", "volume_outline.md");
+        const outlineContent = await readFile(outlinePath, "utf-8");
+        
+        // Find specific volume in outline
+        const volumeRegex = new RegExp(`### 第${volumeId}卷\\s*([^\\n]*)[\\s\\S]*?章节范围[：:](\\d+)-(\\d+)[\\s\\S]*?([\\s\\S]*?)(?=### 第\\d+卷|$)`);
+        const match = volumeRegex.exec(outlineContent);
+        
+        if (!match) {
+          return JSON.stringify({ error: `Volume ${volumeId} not found in outline` });
+        }
+        
+        const result: Record<string, unknown> = {
+          bookId,
+          volumeId,
+          title: match[1]?.trim() || `第${volumeId}卷`,
+          chapterRange: {
+            start: parseInt(match[2], 10),
+            end: parseInt(match[3], 10),
+          },
+          outline: match[4]?.trim() || "",
+        };
+        
+        // Try to read detailed outline if exists
+        const detailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+        try {
+          await stat(detailPath);
+          const detailContent = await readFile(detailPath, "utf-8");
+          result.detailOutline = detailContent;
+          result.hasDetailOutline = true;
+        } catch {
+          result.hasDetailOutline = false;
+        }
+        
+        return JSON.stringify(result);
+      } catch (err: unknown) {
+        return JSON.stringify({ error: `Failed to get volume detail: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    }
+
+    case "generate_volume_detail": {
+      const bookId = args.bookId as string;
+      const volumeId = args.volumeId as number;
+      
+      try {
+        const book = await state.loadBookConfig(bookId);
+        const bookDir = state.bookDir(bookId);
+        const { join } = await import("node:path");
+        const { writeFile } = await import("node:fs/promises");
+        
+        // Use ArchitectAgent to generate detailed volume outline
+        const { ArchitectAgent } = await import("../agents/architect.js");
+        const { createLogger, nullSink } = await import("../utils/logger.js");
+        const ctx = {
+          client: config.client,
+          model: config.model,
+          projectRoot: config.projectRoot,
+          bookId,
+          logger: createLogger({ tag: "architect", sinks: [nullSink] }),
+        };
+        const architect = new ArchitectAgent(ctx);
+        
+        const result = await architect.generateVolumeDetail(book, bookDir, volumeId);
+        
+        // Filter out <think> tags
+        let filteredContent = result.volumeDetail;
+        filteredContent = filteredContent.replace(/<think>[\s\S]*?<\/think>/gi, "");
+        filteredContent = filteredContent.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "");
+        filteredContent = filteredContent.replace(/\n{3,}/g, "\n\n").trim();
+        
+        // Save the generated volume detail
+        const volumeDetailPath = join(bookDir, "story", `volume_${volumeId}_detail.md`);
+        await writeFile(volumeDetailPath, filteredContent, "utf-8");
+        
+        return JSON.stringify({
+          bookId,
+          volumeId,
+          detailFile: `volume_${volumeId}_detail.md`,
+          generated: true,
+          preview: filteredContent.slice(0, 500) + (filteredContent.length > 500 ? "..." : ""),
+        });
+      } catch (err: unknown) {
+        return JSON.stringify({ error: `Failed to generate volume detail: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    }
+
+    case "regenerate_volume_outline": {
+      const bookId = args.bookId as string;
+      const authorIntent = (args.authorIntent as string) || "";
+      const rewriteLevel = (args.rewriteLevel as "low" | "medium" | "high") || "medium";
+      
+      try {
+        const result = await pipeline.regenerateOutline(bookId, authorIntent, rewriteLevel);
+        return JSON.stringify({
+          bookId,
+          regenerated: true,
+          tempPath: result.tempPath,
+          message: "卷纲已重新生成并保存为临时文件，需要调用 confirm_outline 确认更新",
+        });
+      } catch (err: unknown) {
+        return JSON.stringify({ error: `Failed to regenerate volume outline: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    }
+
+    case "confirm_outline": {
+      const bookId = args.bookId as string;
+      
+      try {
+        await pipeline.confirmOutline(bookId);
+        return JSON.stringify({
+          bookId,
+          confirmed: true,
+          message: "卷纲已确认更新",
+        });
+      } catch (err: unknown) {
+        return JSON.stringify({ error: `Failed to confirm outline: ${err instanceof Error ? err.message : String(err)}` });
+      }
     }
 
     default:

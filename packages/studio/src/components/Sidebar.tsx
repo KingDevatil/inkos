@@ -15,6 +15,8 @@ import {
   FileInput,
   TrendingUp,
   Stethoscope,
+  Server,
+  MessageSquare,
 } from "lucide-react";
 
 interface BookSummary {
@@ -37,6 +39,7 @@ interface Nav {
   toImport: () => void;
   toRadar: () => void;
   toDoctor: () => void;
+  toServices: () => void;
 }
 
 export function Sidebar({ nav, activePage, sse, t }: {
@@ -140,8 +143,8 @@ export function Sidebar({ nav, activePage, sse, t }: {
             <SidebarItem
               label={t("nav.config")}
               icon={<Settings size={16} />}
-              active={activePage === "config"}
-              onClick={nav.toConfig}
+              active={activePage === "services"}
+              onClick={nav.toServices}
             />
             <SidebarItem
               label={t("nav.daemon")}

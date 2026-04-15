@@ -34,7 +34,8 @@ import {
   Send,
   BookOpen,
   List,
-  Play
+  Play,
+  MessageSquare
 } from "lucide-react";
 
 interface ChapterMeta {
@@ -74,6 +75,7 @@ interface Nav {
   toDashboard: () => void;
   toChapter: (bookId: string, num: number) => void;
   toAnalytics: (bookId: string) => void;
+  toChat: () => void;
 }
 
 function translateChapterStatus(status: string, t: TFunction): string {
@@ -1096,6 +1098,13 @@ export function BookDetail({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={nav.toChat}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-secondary text-secondary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all"
+          >
+            <MessageSquare size={16} />
+            AI 助手
+          </button>
           <button
             onClick={handleWriteNext}
             disabled={writing}

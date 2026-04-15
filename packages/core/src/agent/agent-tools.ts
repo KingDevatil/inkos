@@ -1,6 +1,6 @@
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
-import type { PipelineRunner } from "../pipeline/runner.js";
+import { PipelineRunner, type PipelineConfig } from "../pipeline/runner.js";
 import type { ReviseMode } from "../agents/reviser.js";
 import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import { join, normalize, resolve } from "node:path";
@@ -29,6 +29,12 @@ function safeBooksPath(booksRoot: string, relativePath: string): string {
 // 1. SubAgentTool (sub_agent)
 // ---------------------------------------------------------------------------
 
+interface SubAgentParamsType {
+  agent: "architect" | "writer" | "auditor" | "reviser" | "exporter";
+  instruction: string;
+  bookId?: string;
+}
+
 const SubAgentParams = Type.Object({
   agent: Type.Union([
     Type.Literal("architect"),
@@ -41,7 +47,8 @@ const SubAgentParams = Type.Object({
   bookId: Type.Optional(Type.String({ description: "Book ID — required for all agents except architect" })),
 });
 
-export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: string | null): AgentTool<typeof SubAgentParams> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: string | null, pipelineConfig?: PipelineConfig): AgentTool<any> {
   return {
     name: "sub_agent",
     description:
@@ -52,7 +59,7 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
     parameters: SubAgentParams,
     async execute(
       _toolCallId: string,
-      params: Static<typeof SubAgentParams>,
+      params: SubAgentParamsType,
       _signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<undefined>> {
@@ -71,10 +78,13 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
             }
             const id = bookId || `book-${Date.now().toString(36)}`;
             progress(`Starting architect for book "${id}"...`);
-            await pipeline.initBook(
-              { id, genre: "general", title: "", language: "zh" } as any,
-              { externalContext: instruction },
-            );
+            const bookConfig = { id, genre: "general", title: "", language: "zh" } as unknown;
+            if (instruction && pipelineConfig) {
+              const contextPipeline = new PipelineRunner({ ...pipelineConfig, externalContext: instruction });
+              await contextPipeline.initBook(bookConfig as Parameters<PipelineRunner["initBook"]>[0]);
+            } else {
+              await pipeline.initBook(bookConfig as Parameters<PipelineRunner["initBook"]>[0]);
+            }
             progress(`Architect finished — book "${id}" foundation created.`);
             return textResult(`Book "${id}" initialised successfully. Foundation files are ready.`);
           }
@@ -86,7 +96,7 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
             progress(`Writer finished chapter for "${bookId}".`);
             return textResult(
               `Chapter written for "${bookId}". ` +
-              `Word count: ${(result as any).wordCount ?? "unknown"}.`,
+              `Word count: ${(result as { wordCount?: number }).wordCount ?? "unknown"}.`,
             );
           }
 
@@ -125,9 +135,9 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
           default:
             return textResult(`Unknown agent: ${agent}`);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error(`[sub_agent] "${agent}" failed:`, err);
-        return textResult(`Sub-agent "${agent}" failed: ${err?.message ?? String(err)}`);
+        return textResult(`Sub-agent "${agent}" failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   };
@@ -137,11 +147,16 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
 // 2. Read Tool
 // ---------------------------------------------------------------------------
 
+interface ReadParamsType {
+  path: string;
+}
+
 const ReadParams = Type.Object({
   path: Type.String({ description: "File path relative to books/, e.g. {bookId}/story/story_bible.md" }),
 });
 
-export function createReadTool(projectRoot: string): AgentTool<typeof ReadParams> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createReadTool(projectRoot: string): AgentTool<any> {
   const booksRoot = join(projectRoot, "books");
 
   return {
@@ -151,7 +166,7 @@ export function createReadTool(projectRoot: string): AgentTool<typeof ReadParams
     parameters: ReadParams,
     async execute(
       _toolCallId: string,
-      params: Static<typeof ReadParams>,
+      params: ReadParamsType,
     ): Promise<AgentToolResult<undefined>> {
       try {
         const filePath = safeBooksPath(booksRoot, params.path);
@@ -160,8 +175,8 @@ export function createReadTool(projectRoot: string): AgentTool<typeof ReadParams
           content = content.slice(0, 10_000) + "\n\n... [truncated at 10 000 chars]";
         }
         return textResult(content);
-      } catch (err: any) {
-        return textResult(`Failed to read "${params.path}": ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        return textResult(`Failed to read "${params.path}": ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   };
@@ -171,13 +186,20 @@ export function createReadTool(projectRoot: string): AgentTool<typeof ReadParams
 // 3. Edit Tool
 // ---------------------------------------------------------------------------
 
+interface EditParamsType {
+  path: string;
+  old_string: string;
+  new_string: string;
+}
+
 const EditParams = Type.Object({
   path: Type.String({ description: "File path relative to books/" }),
   old_string: Type.String({ description: "Exact string to find in the file" }),
   new_string: Type.String({ description: "Replacement string" }),
 });
 
-export function createEditTool(projectRoot: string): AgentTool<typeof EditParams> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createEditTool(projectRoot: string): AgentTool<any> {
   const booksRoot = join(projectRoot, "books");
 
   return {
@@ -189,7 +211,7 @@ export function createEditTool(projectRoot: string): AgentTool<typeof EditParams
     parameters: EditParams,
     async execute(
       _toolCallId: string,
-      params: Static<typeof EditParams>,
+      params: EditParamsType,
     ): Promise<AgentToolResult<undefined>> {
       try {
         const filePath = safeBooksPath(booksRoot, params.path);
@@ -204,8 +226,8 @@ export function createEditTool(projectRoot: string): AgentTool<typeof EditParams
         const updated = content.slice(0, idx) + params.new_string + content.slice(idx + params.old_string.length);
         await writeFile(filePath, updated, "utf-8");
         return textResult(`File "${params.path}" updated successfully.`);
-      } catch (err: any) {
-        return textResult(`Failed to edit "${params.path}": ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        return textResult(`Failed to edit "${params.path}": ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   };
@@ -215,12 +237,18 @@ export function createEditTool(projectRoot: string): AgentTool<typeof EditParams
 // 4. Grep Tool
 // ---------------------------------------------------------------------------
 
+interface GrepParamsType {
+  bookId: string;
+  pattern: string;
+}
+
 const GrepParams = Type.Object({
   bookId: Type.String({ description: "Book ID to search within" }),
   pattern: Type.String({ description: "Search pattern (plain text or regex)" }),
 });
 
-export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createGrepTool(projectRoot: string): AgentTool<any> {
   const booksRoot = join(projectRoot, "books");
 
   return {
@@ -231,7 +259,7 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
     parameters: GrepParams,
     async execute(
       _toolCallId: string,
-      params: Static<typeof GrepParams>,
+      params: GrepParamsType,
     ): Promise<AgentToolResult<undefined>> {
       try {
         const bookDir = safeBooksPath(booksRoot, params.bookId);
@@ -277,8 +305,8 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
           : results.join("\n");
 
         return textResult(truncated);
-      } catch (err: any) {
-        return textResult(`Grep failed: ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        return textResult(`Grep failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   };
@@ -288,6 +316,11 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
 // 5. Ls Tool
 // ---------------------------------------------------------------------------
 
+interface LsParamsType {
+  bookId: string;
+  subdir?: string;
+}
+
 const LsParams = Type.Object({
   bookId: Type.String({ description: "Book ID" }),
   subdir: Type.Optional(
@@ -295,7 +328,8 @@ const LsParams = Type.Object({
   ),
 });
 
-export function createLsTool(projectRoot: string): AgentTool<typeof LsParams> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createLsTool(projectRoot: string): AgentTool<any> {
   const booksRoot = join(projectRoot, "books");
 
   return {
@@ -305,7 +339,7 @@ export function createLsTool(projectRoot: string): AgentTool<typeof LsParams> {
     parameters: LsParams,
     async execute(
       _toolCallId: string,
-      params: Static<typeof LsParams>,
+      params: LsParamsType,
     ): Promise<AgentToolResult<undefined>> {
       try {
         const base = safeBooksPath(booksRoot, params.bookId);
@@ -330,8 +364,8 @@ export function createLsTool(projectRoot: string): AgentTool<typeof LsParams> {
         }
 
         return textResult(details.join("\n"));
-      } catch (err: any) {
-        return textResult(`Failed to list "${params.bookId}/${params.subdir ?? ""}": ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        return textResult(`Failed to list "${params.bookId}/${params.subdir ?? ""}": ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   };
