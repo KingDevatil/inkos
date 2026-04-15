@@ -22,7 +22,8 @@ import { useSSE } from "./hooks/use-sse";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
 import { postApi, useApi } from "./hooks/use-api";
-import { Sun, Moon, Bell, HelpCircle } from "lucide-react";
+import { usePreferencesStore } from "./store/preferences/store";
+import { Sun, Moon, Bell, HelpCircle, LayoutTemplate } from "lucide-react";
 
 export type Route =
   | { page: "dashboard" }
@@ -59,6 +60,7 @@ export function App() {
   const [ready, setReady] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const { viewMode, toggleViewMode } = usePreferencesStore();
 
   const isDark = theme === "dark";
 
@@ -147,6 +149,15 @@ export function App() {
               <HelpCircle size={16} />
             </button>
 
+            {/* View Mode Toggle */}
+            <button
+              onClick={toggleViewMode}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
+              title={viewMode === "classic" ? "切换到对话优先模式" : "切换到经典模式"}
+            >
+              <LayoutTemplate size={16} />
+            </button>
+
             <button
               onClick={() => setTheme(isDark ? "light" : "dark")}
               className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
@@ -184,8 +195,33 @@ export function App() {
         <main className="flex-1 overflow-y-auto scroll-smooth">
           <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
             {route.page === "dashboard" && <Dashboard nav={nav} sse={sse} theme={theme} t={t} />}
-            {route.page === "book" && <BookDetail bookId={route.bookId} nav={nav} theme={theme} t={t} sse={sse} />}
-            {route.page === "book-create" && <BookCreate nav={nav} theme={theme} t={t} />}
+            {/* Book route: different behavior based on viewMode */}
+            {route.page === "book" && viewMode === "classic" && (
+              <BookDetail bookId={route.bookId} nav={nav} theme={theme} t={t} sse={sse} />
+            )}
+            {route.page === "book" && viewMode === "chat-first" && (
+              <div className="absolute inset-0 flex min-w-0">
+                <ChatPage
+                  activeBookId={route.bookId}
+                  nav={nav}
+                  theme={theme}
+                  t={t}
+                  sse={sse}
+                />
+              </div>
+            )}
+            {route.page === "book-create" && viewMode === "classic" && <BookCreate nav={nav} theme={theme} t={t} />}
+            {route.page === "book-create" && viewMode === "chat-first" && (
+              <div className="absolute inset-0 flex min-w-0">
+                <ChatPage
+                  activeBookId={undefined}
+                  nav={nav}
+                  theme={theme}
+                  t={t}
+                  sse={sse}
+                />
+              </div>
+            )}
             {route.page === "chapter" && <ChapterReader bookId={route.bookId} chapterNumber={route.chapterNumber} nav={nav} theme={theme} t={t} />}
             {route.page === "chat" && (
               <div className="absolute inset-0 flex min-w-0">
