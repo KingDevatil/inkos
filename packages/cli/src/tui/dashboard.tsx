@@ -13,6 +13,7 @@ import { resolveComposerCaretState } from "./composer-caret.js";
 import { resolveChatDepthProfile, type ChatDepth } from "./chat-depth.js";
 import { appendStreamingAssistantChunk, createOptimisticUserMessageSession } from "./chat-draft.js";
 import { renderComposerDisplay } from "./composer-display.js";
+import { renderMarkdown } from "./markdown.js";
 import { formatTuiResult } from "./output.js";
 import { buildDashboardViewModel, type DashboardMessageRow } from "./dashboard-model.js";
 import { buildInputHistory, moveHistoryCursor } from "./input-history.js";
@@ -29,6 +30,7 @@ import {
   WARM_ACCENT, WARM_BORDER, WARM_MUTED, WARM_REPLY,
   STATUS_SUCCESS, STATUS_ERROR, STATUS_ACTIVE, STATUS_IDLE,
   ROLE_USER, ROLE_SYSTEM,
+  isAppleTerminal,
 } from "./theme.js";
 
 export interface InkTuiDashboardProps {
@@ -45,6 +47,7 @@ export interface InkTuiDashboardProps {
   readonly slashSuggestions?: ReadonlyArray<string>;
   readonly selectedSlashIndex?: number;
   readonly showComposerCursor?: boolean;
+  readonly scrollOffset?: number;
   readonly onInputChange?: (value: string) => void;
   readonly onSubmit?: (value: string) => void;
 }
@@ -77,6 +80,7 @@ export function InkTuiDashboard(props: InkTuiDashboardProps): React.JSX.Element 
     isSubmitting: props.isSubmitting,
     lastError: props.lastError,
     sinceTimestamp: props.sinceTimestamp,
+    scrollOffset: props.scrollOffset,
   });
   const activeAccent = props.isSubmitting ? WARM_ACCENT : statusColor(model.executionStatus);
   const composer = renderComposerDisplay(props.inputValue, model.composerPlaceholder, props.showComposerCursor ?? false);
@@ -101,16 +105,9 @@ export function InkTuiDashboard(props: InkTuiDashboardProps): React.JSX.Element 
         )}
       </Box>
 
-      {/* Status strip */}
+      {/* Composer area */}
       <Box flexDirection="column" marginTop={1}>
         <Text color={WARM_BORDER}>{thinRule}</Text>
-        <Box marginTop={1}>
-          <ExecutionBadge status={model.executionStatus} color={activeAccent} />
-          <Text color={activeAccent}> {model.statusPrimaryLine}</Text>
-        </Box>
-        <Text color={model.errorText ? STATUS_ERROR : props.isSubmitting ? WARM_ACCENT : WARM_MUTED}>
-          {"  " + model.statusSecondaryLine}
-        </Text>
 
         {/* Composer input */}
         <Box
@@ -141,14 +138,6 @@ export function InkTuiDashboard(props: InkTuiDashboardProps): React.JSX.Element 
               </Text>
             ) : null}
           </Box>
-          <Box>
-            <Text color={props.isSubmitting ? STATUS_ACTIVE : WARM_MUTED}>
-              {model.composerStatus}
-            </Text>
-            <Text color={WARM_BORDER}> │ </Text>
-            <Text color={WARM_MUTED}>{model.composerHelper}</Text>
-          </Box>
-
           {/* Slash command suggestions */}
           {props.slashSuggestions && props.slashSuggestions.length > 0 ? (
             <Box flexDirection="column" marginTop={1} borderTop borderColor={WARM_BORDER}>
@@ -166,6 +155,10 @@ export function InkTuiDashboard(props: InkTuiDashboardProps): React.JSX.Element 
             </Box>
           ) : null}
         </Box>
+        <Box marginTop={1}>
+          <ExecutionBadge status={model.executionStatus} color={activeAccent} />
+          <Text color={activeAccent}> {model.statusPrimaryLine}</Text>
+        </Box>
       </Box>
     </Box>
   );
@@ -180,6 +173,7 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
   const [lastError, setLastError] = useState<string | undefined>();
   const [sinceTimestamp, setSinceTimestamp] = useState<number | undefined>();
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
   const [historyState, setHistoryState] = useState<{ cursor: number | null; draft: string }>({
     cursor: null,
     draft: "",
@@ -240,7 +234,12 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
     }
 
     if (key.backspace || key.delete) {
-      setInputValue((current) => current.slice(0, -1));
+      setInputValue((current) => {
+        // Use Intl.Segmenter for grapheme-aware backspace (handles CJK, emoji, etc.)
+        const segments = [...new Intl.Segmenter().segment(current)];
+        segments.pop();
+        return segments.map((s) => s.segment).join("");
+      });
       setSelectedSlashIndex(0);
       return;
     }
@@ -252,6 +251,18 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
 
     if (slashSuggestions.length > 0 && key.upArrow) {
       setSelectedSlashIndex((current) => getNextSlashSelection(current, slashSuggestions.length, "up"));
+      return;
+    }
+
+    // Page Up / Page Down for conversation scrolling
+    // Raw sequences: Page Up = \x1b[5~ , Page Down = \x1b[6~
+    if (_input === "\x1b[5~") {
+      const maxOffset = Math.max(0, session.messages.length - 4);
+      setScrollOffset((cur) => Math.min(maxOffset, cur + 3));
+      return;
+    }
+    if (_input === "\x1b[6~") {
+      setScrollOffset((cur) => Math.max(0, cur - 3));
       return;
     }
 
@@ -344,16 +355,23 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
       const routed = routeNaturalLanguageIntent(input, {
         activeBookId,
         hasCreationDraft: Boolean(session.creationDraft),
+        hasFailed: session.currentExecution?.status === "failed",
       });
       const userTimestamp = Date.now();
-      const assistantDraftTimestamp = routed.intent === "chat" ? userTimestamp + 1 : null;
+      const assistantDraftTimestamp = (routed.intent === "chat" || routed.intent === "develop_book")
+        ? userTimestamp + 1 : null;
       assistantDraftTimestampRef.current = assistantDraftTimestamp;
       setActivityIntent(routed.intent);
       setIsSubmitting(true);
       setLastError(undefined);
       setInputValue("");
+      setScrollOffset(0);
       setHistoryState({ cursor: null, draft: "" });
       setSession((current) => createOptimisticUserMessageSession(current, input, userTimestamp));
+
+      if (routed.intent === "develop_book" && !session.creationDraft) {
+        appendSystemNote(copy.notes.newBookGuide);
+      }
 
       const result = await processProjectInteractionInput({
         projectRoot: props.projectRoot,
@@ -416,6 +434,7 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
       slashSuggestions={slashSuggestions}
       selectedSlashIndex={selectedSlashIndex}
       showComposerCursor={composerCaret.visible}
+      scrollOffset={scrollOffset}
       onInputChange={(value) => {
         setInputValue(value);
         setSelectedSlashIndex(0);
@@ -429,31 +448,44 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
 }
 
 function ConversationRow(props: { readonly row: DashboardMessageRow }): React.JSX.Element {
-  const { role, content, label } = props.row;
+  const { role, content } = props.row;
+
+  // Terminal.app: use the same simple layout as the main branch to avoid
+  // triggering CoreGraphics crashes from complex Box nesting + ANSI codes.
+  if (isAppleTerminal) {
+    const prefix = role === "user" ? "│ " : role === "system" ? "· " : "◆ ";
+    const color = role === "user" ? ROLE_USER : role === "system" ? ROLE_SYSTEM : WARM_REPLY;
+    return (
+      <Box marginBottom={1}>
+        <Text color={role === "assistant" ? WARM_ACCENT : color}>{prefix}</Text>
+        <Text color={color}>{content}</Text>
+      </Box>
+    );
+  }
 
   if (role === "user") {
     return (
-      <Box marginBottom={1}>
-        <Text color={ROLE_USER}>│ </Text>
-        <Text color={WARM_REPLY}>{content}</Text>
+      <Box flexDirection="row" marginBottom={1}>
+        <Box minWidth={2}><Text color={ROLE_USER}>│</Text></Box>
+        <Box flexDirection="column" flexShrink={1}><Text color={ROLE_USER}>{content}</Text></Box>
       </Box>
     );
   }
 
   if (role === "system") {
     return (
-      <Box marginBottom={1}>
-        <Text color={ROLE_SYSTEM}>· </Text>
-        <Text color={ROLE_SYSTEM}>{content}</Text>
+      <Box flexDirection="row" marginBottom={1}>
+        <Box minWidth={2}><Text color={ROLE_SYSTEM}>·</Text></Box>
+        <Box flexDirection="column" flexShrink={1}><Text color={ROLE_SYSTEM}>{content}</Text></Box>
       </Box>
     );
   }
 
-  // assistant
+  // assistant — render markdown (bold, tables, code, etc.)
   return (
-    <Box marginBottom={1}>
-      <Text color={WARM_ACCENT}>◆ </Text>
-      <Text color={WARM_REPLY}>{content}</Text>
+    <Box flexDirection="row" marginBottom={1}>
+      <Box minWidth={2}><Text color={WARM_ACCENT}>◆</Text></Box>
+      <Box flexDirection="column" flexShrink={1}><Text color={WARM_REPLY}>{renderMarkdown(content)}</Text></Box>
     </Box>
   );
 }

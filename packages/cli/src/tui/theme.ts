@@ -1,3 +1,6 @@
+/** Whether the terminal is macOS Terminal.app. */
+export const isAppleTerminal = process.env.TERM_PROGRAM === "Apple_Terminal";
+
 export const WARM_ACCENT = "#c88a56";
 export const WARM_MUTED = "#8f8374";
 export const WARM_REPLY = "#f0e6d8";

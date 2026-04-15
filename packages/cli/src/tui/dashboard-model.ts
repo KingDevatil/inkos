@@ -49,6 +49,7 @@ export interface BuildDashboardViewModelParams {
   readonly lastError?: string;
   readonly sinceTimestamp?: number;
   readonly terminalRows?: number;
+  readonly scrollOffset?: number;
 }
 
 export function buildDashboardViewModel(params: BuildDashboardViewModelParams): DashboardViewModel {
@@ -62,9 +63,13 @@ export function buildDashboardViewModel(params: BuildDashboardViewModelParams): 
   const terminalRows = params.terminalRows ?? process.stdout.rows ?? 24;
   const conversationLimit = Math.max(4, terminalRows - 10);
 
-  const messageRows = params.session.messages
-    .filter((message) => message.timestamp >= sinceTimestamp)
-    .slice(-conversationLimit)
+  const filteredMessages = params.session.messages
+    .filter((message) => message.timestamp >= sinceTimestamp);
+  const scrollOffset = params.scrollOffset ?? 0;
+  const endIndex = filteredMessages.length - scrollOffset;
+  const startIndex = Math.max(0, endIndex - conversationLimit);
+  const messageRows = filteredMessages
+    .slice(startIndex, endIndex > 0 ? endIndex : undefined)
     .map((message, index) => ({
       key: `${message.timestamp}-${index}`,
       label: roleLabel(message.role, params.copy),
@@ -98,7 +103,7 @@ export function buildDashboardViewModel(params: BuildDashboardViewModelParams): 
       `${params.copy.labels.session} ${params.session.sessionId.slice(-4)}`,
       params.copy.labels.messageCount(params.session.messages.length),
     ].filter(Boolean).join(" · "),
-    statusPrimaryLine: `${params.copy.labels.stage} ${executionLabel} · ${params.copy.labels.mode} ${modeLabel} · ${params.copy.labels.model} ${params.modelLabel}`,
+    statusPrimaryLine: `${params.copy.labels.stage} ${executionLabel} · ${params.copy.labels.model} ${params.modelLabel}`,
     statusSecondaryLine: params.lastError
       ? `${params.copy.labels.error} · ${compactInline(params.lastError)}`
       : params.isSubmitting && latestEventSummary
