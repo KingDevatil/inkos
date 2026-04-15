@@ -85,7 +85,7 @@ export const VectorModelConfigSchema = z.object({
 
 export const VectorRetrievalConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  model: VectorModelConfigSchema.optional(),
+  model: VectorModelConfigSchema,
   topK: z.number().int().optional(),
   minScore: z.number().optional(),
   storePath: z.string().optional(),
