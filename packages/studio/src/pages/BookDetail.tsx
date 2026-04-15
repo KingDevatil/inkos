@@ -189,20 +189,6 @@ function RAGSupplementButton({ bookId }: { bookId: string }) {
     setProgress(null);
   };
 
-  // Custom confirm dialog helper - defined early for use in RAG modal
-  const showConfirmDialog = (title: string, message: string, onConfirm: () => void) => {
-    setConfirmTitle(title);
-    setConfirmMessage(message);
-    setConfirmCallback(() => onConfirm);
-    setShowConfirm(true);
-  };
-
-  // Custom alert dialog helper
-  const showAlertDialog = (message: string) => {
-    setAlertMessage(message);
-    setShowAlert(true);
-  };
-
   const rebuild = async () => {
     showConfirmDialog(
       "确认重建RAG索引",
@@ -480,7 +466,21 @@ export function BookDetail({
   const [inputDialogMessage, setInputDialogMessage] = useState("");
   const [inputDialogValue, setInputDialogValue] = useState("");
   const [inputDialogCallback, setInputDialogCallback] = useState<((value: string | null) => void) | null>(null);
-  
+
+  // Custom confirm dialog helper
+  const showConfirmDialog = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmTitle(title);
+    setConfirmMessage(message);
+    setConfirmCallback(() => onConfirm);
+    setShowConfirm(true);
+  };
+
+  // Custom alert dialog helper
+  const showAlertDialog = (message: string) => {
+    setAlertMessage(message);
+    setShowAlert(true);
+  };
+
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
