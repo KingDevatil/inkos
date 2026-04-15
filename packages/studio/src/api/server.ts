@@ -1691,19 +1691,58 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       
       // 初始化RAG管理器
       const projectConfig = await loadCurrentProjectConfig();
-      const vectorRetrievalConfig = (projectConfig as unknown as { vectorRetrieval?: { enabled?: boolean } }).vectorRetrieval;
-      
+      const vectorRetrievalConfig = (projectConfig as unknown as { vectorRetrieval?: VectorRetrievalConfig }).vectorRetrieval;
+
       if (!vectorRetrievalConfig?.enabled) {
         return c.json({ error: "RAG is not enabled in project config" }, 400);
       }
-      
+
       const ragManager = await createRAGManager({
         bookDir,
-        config: vectorRetrievalConfig as VectorRetrievalConfig,
+        config: vectorRetrievalConfig,
       });
-      
+
       if (!ragManager.isAvailable()) {
-        return c.json({ error: "RAG manager is not available" }, 500);
+        const modelConfig = vectorRetrievalConfig.model;
+        const modelType = modelConfig?.type || "unknown";
+        let apiKeyEnv = "";
+        switch (modelType) {
+          case "openai":
+            apiKeyEnv = "OPENAI_API_KEY";
+            break;
+          case "siliconflow":
+            apiKeyEnv = "SILICONFLOW_API_KEY";
+            break;
+          case "mota":
+            apiKeyEnv = "MOTA_API_KEY";
+            break;
+          case "modelscope":
+            apiKeyEnv = "MODELSCOPE_API_KEY";
+            break;
+          case "zhipu":
+            apiKeyEnv = "ZHIPU_API_KEY";
+            break;
+          case "dashscope":
+            apiKeyEnv = "DASHSCOPE_API_KEY";
+            break;
+          case "lmstudio":
+          case "local":
+            apiKeyEnv = "(local model, no API key required)";
+            break;
+          default:
+            apiKeyEnv = "<unknown>";
+        }
+        return c.json({
+          error: "RAG manager is not available",
+          details: `Embedding client '${modelType}' is not available. Please check:\n1. RAG_ENABLED is set to 'true' in environment\n2. ${apiKeyEnv ? `${apiKeyEnv} is set in .env file` : "API key is configured"}\n3. For local models (lmstudio/ollama), ensure the service is running`,
+          modelType,
+          config: {
+            enabled: vectorRetrievalConfig.enabled,
+            modelType: modelConfig?.type,
+            model: modelConfig?.model,
+            hasApiKey: !!modelConfig?.apiKey,
+          },
+        }, 500);
       }
       
       const statusManager = await createRAGStatusManager(bookDir, id);
@@ -1779,21 +1818,60 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       
       // 初始化RAG管理器
       const projectConfig = await loadCurrentProjectConfig();
-      const vectorRetrievalConfig = (projectConfig as unknown as { vectorRetrieval?: { enabled?: boolean } }).vectorRetrieval;
-      
+      const vectorRetrievalConfig = (projectConfig as unknown as { vectorRetrieval?: VectorRetrievalConfig }).vectorRetrieval;
+
       if (!vectorRetrievalConfig?.enabled) {
         return c.json({ error: "RAG is not enabled in project config" }, 400);
       }
-      
+
       const ragManager = await createRAGManager({
         bookDir,
-        config: vectorRetrievalConfig as VectorRetrievalConfig,
+        config: vectorRetrievalConfig,
       });
-      
+
       if (!ragManager.isAvailable()) {
-        return c.json({ error: "RAG manager is not available" }, 500);
+        const modelConfig = vectorRetrievalConfig.model;
+        const modelType = modelConfig?.type || "unknown";
+        let apiKeyEnv = "";
+        switch (modelType) {
+          case "openai":
+            apiKeyEnv = "OPENAI_API_KEY";
+            break;
+          case "siliconflow":
+            apiKeyEnv = "SILICONFLOW_API_KEY";
+            break;
+          case "mota":
+            apiKeyEnv = "MOTA_API_KEY";
+            break;
+          case "modelscope":
+            apiKeyEnv = "MODELSCOPE_API_KEY";
+            break;
+          case "zhipu":
+            apiKeyEnv = "ZHIPU_API_KEY";
+            break;
+          case "dashscope":
+            apiKeyEnv = "DASHSCOPE_API_KEY";
+            break;
+          case "lmstudio":
+          case "local":
+            apiKeyEnv = "(local model, no API key required)";
+            break;
+          default:
+            apiKeyEnv = "<unknown>";
+        }
+        return c.json({
+          error: "RAG manager is not available",
+          details: `Embedding client '${modelType}' is not available. Please check:\n1. RAG_ENABLED is set to 'true' in environment\n2. ${apiKeyEnv ? `${apiKeyEnv} is set in .env file` : "API key is configured"}\n3. For local models (lmstudio/local), ensure the service is running`,
+          modelType,
+          config: {
+            enabled: vectorRetrievalConfig.enabled,
+            modelType: modelConfig?.type,
+            model: modelConfig?.model,
+            hasApiKey: !!modelConfig?.apiKey,
+          },
+        }, 500);
       }
-      
+
       const statusManager = await createRAGStatusManager(bookDir, id);
       const indexer = createRAGIndexer(ragManager, statusManager);
       
