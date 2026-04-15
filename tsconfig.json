@@ -14,7 +14,8 @@
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": "src",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "noErrorTruncation": false
   },
   "exclude": ["node_modules", "dist"]
 }

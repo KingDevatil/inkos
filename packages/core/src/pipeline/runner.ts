@@ -666,6 +666,8 @@ ${historicalIssues}
         : base?.apiKey ?? "";
       client = createLLMClient({
         provider,
+        service: "custom",
+        configSource: "env",
         baseUrl: override.baseUrl,
         apiKey,
         model: override.model,

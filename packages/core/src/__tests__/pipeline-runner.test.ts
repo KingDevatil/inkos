@@ -247,6 +247,8 @@ describe("PipelineRunner", () => {
         projectRoot: process.cwd(),
         defaultLLMConfig: {
           provider: "custom",
+          service: "custom",
+          configSource: "env",
           baseUrl: "https://base.example/v1",
           apiKey: "base-key",
           model: "base-model",
