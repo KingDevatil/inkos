@@ -4485,6 +4485,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
           // 清理状态文件（保留基础设定文件）
           const stateFilesToRemove = [
+            "current_state.md",
+            "pending_hooks.md",
             "chapter_summaries.md",
             "subplot_board.md",
             "emotional_arcs.md",
