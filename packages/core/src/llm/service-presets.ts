@@ -6,6 +6,8 @@ export interface ServicePreset {
   readonly defaultTemperature?: number;
   readonly writingTemperature?: number;
   readonly temperatureHint?: string;
+  /** Hardcoded model list for services that don't support GET /models. */
+  readonly knownModels?: readonly string[];
 }
 
 export const SERVICE_PRESETS: Record<string, ServicePreset> = {
@@ -13,7 +15,7 @@ export const SERVICE_PRESETS: Record<string, ServicePreset> = {
   anthropic:   { api: "anthropic-messages",  baseUrl: "https://api.anthropic.com",                         label: "Anthropic",       temperatureRange: [0, 1], defaultTemperature: 1.0, writingTemperature: 1.0, temperatureHint: "不要同时改 temperature 和 top_p" },
   deepseek:    { api: "openai-completions",  baseUrl: "https://api.deepseek.com",                          label: "DeepSeek",        temperatureRange: [0, 2], defaultTemperature: 1.0, writingTemperature: 1.5, temperatureHint: "创意写作推荐 1.5" },
   moonshot:    { api: "openai-completions",  baseUrl: "https://api.moonshot.cn/v1",                        label: "Moonshot (Kimi)", temperatureRange: [0, 1], defaultTemperature: 0.3, writingTemperature: 1.0, temperatureHint: "kimi-k2.5 推荐 temperature=1.0" },
-  minimax:     { api: "openai-completions",  baseUrl: "https://api.minimax.chat/v1",                       label: "MiniMax",         temperatureRange: [0, 2], defaultTemperature: 0.9, writingTemperature: 0.9 },
+  minimax:     { api: "openai-completions",  baseUrl: "https://api.minimaxi.com/v1",                       label: "MiniMax",         temperatureRange: [0, 2], defaultTemperature: 0.9, writingTemperature: 0.9, knownModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"] },
   bailian:     { api: "openai-completions",  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", label: "百炼 (通义千问)", temperatureRange: [0, 2], defaultTemperature: 0.7, writingTemperature: 1.0 },
   zhipu:       { api: "openai-completions",  baseUrl: "https://open.bigmodel.cn/api/paas/v4",              label: "智谱 GLM",        temperatureRange: [0, 1], defaultTemperature: 0.95, writingTemperature: 0.95 },
   siliconflow: { api: "openai-completions",  baseUrl: "https://api.siliconflow.cn/v1",                     label: "硅基流动" },
@@ -84,7 +86,12 @@ export async function listModelsForService(service: string, apiKey?: string): Pr
   const preset = SERVICE_PRESETS[service];
   if (!preset || service === "custom") return [];
 
-  // 1) 尝试动态获取：调用 GET {baseUrl}/models
+  // 1) Hardcoded model list for services that don't support GET /models
+  if (preset.knownModels && preset.knownModels.length > 0) {
+    return preset.knownModels.map((id) => ({ id, name: id, reasoning: false, contextWindow: 0 }));
+  }
+
+  // 2) 动态获取：调用 GET {baseUrl}/models
   if (apiKey && preset.baseUrl) {
     try {
       const modelsUrl = preset.baseUrl.replace(/\/$/, "") + "/models";
@@ -108,7 +115,7 @@ export async function listModelsForService(service: string, apiKey?: string): Pr
     }
   }
 
-  // 2) 回退到 pi-ai 内置模型列表
+  // 3) 回退到 pi-ai 内置模型列表
   const piProvider = SERVICE_TO_PI_PROVIDER[service];
   if (!piProvider) return [];
 
