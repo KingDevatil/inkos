@@ -267,12 +267,12 @@ ${finalRequirementsPrompt}`;
     // 1. Foundation requires consistency (characters, world-building, etc.)
     // 2. Continuation may cause inconsistencies between parts
     // 3. If content is truncated, we should warn and use what we have
-    this.ctx.logger?.info(`[generateFoundation] Generating foundation with maxTokens=24000`);
+    this.ctx.logger?.info(`[generateFoundation] Generating foundation with maxTokens=32000`);
 
     const response = await this.chat([
       { role: "system", content: langPrefix + systemPrompt },
       { role: "user", content: userMessage },
-    ], { maxTokens: 24000, temperature: 0.8 }); // Increased from 16384 to 24000
+    ], { maxTokens: 32000, temperature: 0.8 }); // Increased from 24000 to 32000
 
     // Save to cache for debugging
     const tempFilePath = await cache.savePart(response.content, 0);
