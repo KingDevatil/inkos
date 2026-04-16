@@ -5,7 +5,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - HTTP_PROXY=
+        - HTTPS_PROXY=
+        - NO_PROXY=
+        - http_proxy=
+        - https_proxy=
+        - no_proxy=
     container_name: inkos
+    # 使用 host 网络模式可以直接访问宿主机的 Ollama（Linux 推荐）
+    # network_mode: host
+    # 如果使用 host 网络模式，需要注释掉 ports 配置
+    # 添加 extra_hosts 支持 host.docker.internal（Docker Desktop）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "3000:3000"
     volumes:
@@ -14,6 +27,9 @@ services:
     environment:
       - INKOS_PROJECT_ROOT=/app/books
       - INKOS_STUDIO_PORT=3000
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - INKOS_LLM_API_KEY=${INKOS_LLM_API_KEY}
+      - INKOS_LLM_BASE_URL=${INKOS_LLM_BASE_URL:-https://api.openai.com/v1}
+      - INKOS_LLM_MODEL=${INKOS_LLM_MODEL:-gpt-3.5-turbo}
+      - INKOS_LLM_MAX_TOKENS=${INKOS_LLM_MAX_TOKENS:-4096}
+      - INKOS_LLM_TEMPERATURE=${INKOS_LLM_TEMPERATURE:-0.7}
     restart: unless-stopped
