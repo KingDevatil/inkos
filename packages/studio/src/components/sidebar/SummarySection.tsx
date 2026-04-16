@@ -12,15 +12,39 @@ function parseStoryBible(content: string): BookSummary {
 
   for (const section of sections) {
     if (/^0?1[_\s]|世界观|world/i.test(section)) {
-      world = section.replace(/^[^\n]+\n/, "").trim().split("\n\n")[0] ?? "";
+      world = extractFirstContentParagraph(section);
     } else if (/^0?2[_\s]|主角|protagonist/i.test(section)) {
-      protagonist = section.replace(/^[^\n]+\n/, "").trim().split("\n\n")[0] ?? "";
-    } else if (/^0?3[_\s]|配角|supporting|cast/i.test(section)) {
-      cast = section.replace(/^[^\n]+\n/, "").trim().split("\n\n")[0] ?? "";
+      protagonist = extractFirstContentParagraph(section);
+    } else if (/^0?3[_\s]|配角|supporting|cast|势力|人物/i.test(section)) {
+      cast = extractFirstContentParagraph(section);
     }
   }
 
   return { world, protagonist, cast };
+}
+
+// 提取第一个真正的内容段落（跳过标题、空行、表格等）
+function extractFirstContentParagraph(section: string): string {
+  // 去掉章节标题行
+  const lines = section.split("\n").slice(1);
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // 跳过空行
+    if (!trimmed) continue;
+    // 跳过标题行（### 开头）
+    if (trimmed.startsWith("#")) continue;
+    // 跳过表格行
+    if (trimmed.startsWith("|") || trimmed.startsWith("+")) continue;
+    // 跳过分隔线
+    if (/^[-=]{3,}$/.test(trimmed)) continue;
+    // 跳过纯加粗的标题
+    if (/^\*\*[^*]+\*\*$/.test(trimmed)) continue;
+    // 找到第一个内容行，返回它
+    return trimmed;
+  }
+  
+  return "";
 }
 
 interface SummarySectionProps {
