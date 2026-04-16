@@ -160,7 +160,7 @@ export {
 // LLM
 export { createLLMClient, chatCompletion, chatWithTools, createStreamMonitor, PartialResponseError, type LLMClient, type LLMResponse, type LLMMessage, type ToolDefinition, type ToolCall, type AgentMessage, type ChatWithToolsResult, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";
 export { loadSecrets, saveSecrets, getServiceApiKey, type SecretsFile } from "./llm/secrets.js";
-export { resolveServicePreset, listModelsForService, listServicesWithModelCount, clampTemperature, getWritingTemperature, guessServiceFromBaseUrl, type ServicePreset, type ModelInfo, SERVICE_PRESETS, SERVICE_TO_PI_PROVIDER } from "./llm/service-presets.js";
+export { resolveServicePreset, listModelsForService, listServicesWithModelCount, clampTemperature, getWritingTemperature, guessServiceFromBaseUrl, resolveServiceModelsBaseUrl, type ServicePreset, type ModelInfo, SERVICE_PRESETS, SERVICE_TO_PI_PROVIDER } from "./llm/service-presets.js";
 export { resolveServiceModel, type ResolvedModel } from "./llm/service-resolver.js";
 export { migrateConfig, type MigrationResult } from "./llm/config-migration.js";
 
