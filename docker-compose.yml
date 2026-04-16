@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  inkos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inkos
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./books:/app/books
+      - ./logs:/app/logs
+    environment:
+      - INKOS_PROJECT_ROOT=/app/books
+      - INKOS_STUDIO_PORT=3000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    restart: unless-stopped
