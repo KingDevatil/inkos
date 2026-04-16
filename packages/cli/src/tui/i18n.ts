@@ -40,6 +40,7 @@ export interface TuiCopy {
     readonly setupProvider: string;
     readonly toolInitFailed: (message: string) => string;
     readonly toolInitHint: string;
+    readonly newBookGuide: string;
   };
   readonly roles: {
     readonly user: string;
@@ -107,6 +108,7 @@ const ZH_CN: TuiCopy = {
     setupProvider: "先配置 API 提供方。",
     toolInitFailed: (message) => `初始化 TUI 工具失败：${message}`,
     toolInitHint: "请检查 .env，或运行：inkos config set-global",
+    newBookGuide: "开始创建新书。请描述你想要写的故事类型、主题或背景，我会帮你建立书籍基础设定。",
   },
   roles: {
     user: "你",
@@ -195,6 +197,7 @@ const EN: TuiCopy = {
     setupProvider: "Let's set up your API provider first.",
     toolInitFailed: (message) => `Failed to initialize TUI tools: ${message}`,
     toolInitHint: "Check your .env or run: inkos config set-global",
+    newBookGuide: "Starting a new book. Describe the type of story, theme, or setting you want to write, and I'll help you establish the book's foundation.",
   },
   roles: {
     user: "You",

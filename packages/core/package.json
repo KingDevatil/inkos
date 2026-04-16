@@ -51,6 +51,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@sinclair/typebox": "^0.34.49",
     "@types/js-yaml": "^4.0.9",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"

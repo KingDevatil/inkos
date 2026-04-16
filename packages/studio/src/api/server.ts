@@ -10,6 +10,11 @@ import {
   createJsonLineSink,
   computeAnalytics,
   loadProjectConfig,
+  loadSecrets,
+  saveSecrets,
+  getServiceApiKey,
+  resolveServicePreset,
+  listModelsForService,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
@@ -42,6 +47,198 @@ const bookCreateStatus = new Map<string, { status: "creating" | "error"; error?:
 function broadcast(event: string, data: unknown): void {
   for (const handler of subscribers) {
     handler(event, data);
+  }
+}
+
+// --- Service management helpers ---
+
+interface ServiceConfigEntry {
+  service: string;
+  name?: string;
+  baseUrl?: string;
+  temperature?: number;
+  maxTokens?: number;
+  apiFormat?: "chat" | "responses";
+  stream?: boolean;
+}
+
+type LLMConfigSource = "env" | "studio";
+
+interface EnvConfigSummary {
+  detected: boolean;
+  provider: string | null;
+  baseUrl: string | null;
+  model: string | null;
+  hasApiKey: boolean;
+}
+
+interface EnvConfigStatus {
+  project: EnvConfigSummary;
+  global: EnvConfigSummary;
+  effectiveSource: "project" | "global" | null;
+}
+
+function isCustomServiceId(serviceId: string): boolean {
+  return serviceId === "custom" || serviceId.startsWith("custom:");
+}
+
+function serviceConfigKey(entry: ServiceConfigEntry): string {
+  return entry.service === "custom" ? `custom:${entry.name ?? "Custom"}` : entry.service;
+}
+
+function normalizeConfigSource(value: unknown): LLMConfigSource {
+  return value === "studio" ? "studio" : "env";
+}
+
+/** Ensure custom baseUrl ends with /v1 (common convention for OpenAI-compatible APIs). */
+function normalizeBaseUrl(url: string): string {
+  const trimmed = url.replace(/\/+$/, "");
+  if (/\/v\d+$/.test(trimmed)) return trimmed;
+  return trimmed + "/v1";
+}
+
+function normalizeServiceEntry(serviceId: string, value: Record<string, unknown>): ServiceConfigEntry {
+  if (serviceId.startsWith("custom:")) {
+    return {
+      service: "custom",
+      name: decodeURIComponent(serviceId.slice("custom:".length)),
+      ...(typeof value.baseUrl === "string" && value.baseUrl.length > 0 ? { baseUrl: normalizeBaseUrl(value.baseUrl) } : {}),
+      ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
+      ...(typeof value.maxTokens === "number" ? { maxTokens: value.maxTokens } : {}),
+      ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
+      ...(typeof value.stream === "boolean" ? { stream: value.stream } : {}),
+    };
+  }
+
+  if (serviceId === "custom") {
+    return {
+      service: "custom",
+      ...(typeof value.name === "string" && value.name.length > 0 ? { name: value.name } : {}),
+      ...(typeof value.baseUrl === "string" && value.baseUrl.length > 0 ? { baseUrl: normalizeBaseUrl(value.baseUrl) } : {}),
+      ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
+      ...(typeof value.maxTokens === "number" ? { maxTokens: value.maxTokens } : {}),
+      ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
+      ...(typeof value.stream === "boolean" ? { stream: value.stream } : {}),
+    };
+  }
+
+  return {
+    service: serviceId,
+    ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
+    ...(typeof value.maxTokens === "number" ? { maxTokens: value.maxTokens } : {}),
+    ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
+    ...(typeof value.stream === "boolean" ? { stream: value.stream } : {}),
+  };
+}
+
+function normalizeServiceConfig(raw: unknown): ServiceConfigEntry[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      .map((entry) => {
+        const svc = typeof entry.service === "string" && entry.service.length > 0 ? entry.service : "custom";
+        const isCustom = svc === "custom";
+        return {
+          service: svc,
+          ...(typeof entry.name === "string" && entry.name.length > 0 ? { name: entry.name } : {}),
+          ...(typeof entry.baseUrl === "string" && entry.baseUrl.length > 0 ? { baseUrl: isCustom ? normalizeBaseUrl(entry.baseUrl) : entry.baseUrl } : {}),
+          ...(typeof entry.temperature === "number" ? { temperature: entry.temperature } : {}),
+          ...(typeof entry.maxTokens === "number" ? { maxTokens: entry.maxTokens } : {}),
+          ...(entry.apiFormat === "chat" || entry.apiFormat === "responses" ? { apiFormat: entry.apiFormat } : {}),
+          ...(typeof entry.stream === "boolean" ? { stream: entry.stream } : {}),
+        };
+      });
+  }
+
+  if (raw && typeof raw === "object") {
+    return Object.entries(raw as Record<string, unknown>)
+      .filter(([, value]) => value && typeof value === "object")
+      .map(([serviceId, value]) => normalizeServiceEntry(serviceId, value as Record<string, unknown>));
+  }
+
+  return [];
+}
+
+function mergeServiceConfig(existing: ServiceConfigEntry[], updates: ServiceConfigEntry[]): ServiceConfigEntry[] {
+  const merged = new Map(existing.map((entry) => [serviceConfigKey(entry), entry]));
+  for (const update of updates) {
+    merged.set(serviceConfigKey(update), update);
+  }
+  return [...merged.values()];
+}
+
+async function loadRawConfig(root: string): Promise<Record<string, unknown>> {
+  const configPath = join(root, "inkos.json");
+  const raw = await readFile(configPath, "utf-8");
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+async function saveRawConfig(root: string, config: Record<string, unknown>): Promise<void> {
+  await writeFile(join(root, "inkos.json"), JSON.stringify(config, null, 2), "utf-8");
+}
+
+async function readEnvConfigSummary(path: string): Promise<EnvConfigSummary> {
+  try {
+    const raw = await readFile(path, "utf-8");
+    const values = new Map<string, string>();
+
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match) continue;
+      const [, key, value] = match;
+      values.set(key, value.trim());
+    }
+
+    const provider = values.get("INKOS_LLM_PROVIDER") ?? null;
+    const baseUrl = values.get("INKOS_LLM_BASE_URL") ?? null;
+    const model = values.get("INKOS_LLM_MODEL") ?? null;
+    const apiKey = values.get("INKOS_LLM_API_KEY") ?? "";
+    const detected = Boolean(provider || baseUrl || model || apiKey);
+
+    return {
+      detected,
+      provider,
+      baseUrl,
+      model,
+      hasApiKey: apiKey.length > 0,
+    };
+  } catch {
+    return {
+      detected: false,
+      provider: null,
+      baseUrl: null,
+      model: null,
+      hasApiKey: false,
+    };
+  }
+}
+
+async function readEnvConfigStatus(root: string): Promise<EnvConfigStatus> {
+  const project = await readEnvConfigSummary(join(root, ".env"));
+  const global = await readEnvConfigSummary(join(homedir(), ".inkos", ".env"));
+  return {
+    project,
+    global,
+    effectiveSource: project.detected ? "project" : global.detected ? "global" : null,
+  };
+}
+
+async function resolveConfiguredServiceBaseUrl(root: string, serviceId: string, inlineBaseUrl?: string): Promise<string | undefined> {
+  if (inlineBaseUrl?.trim()) return isCustomServiceId(serviceId) ? normalizeBaseUrl(inlineBaseUrl.trim()) : inlineBaseUrl.trim();
+
+  if (!isCustomServiceId(serviceId)) {
+    return resolveServicePreset(serviceId)?.baseUrl;
+  }
+
+  try {
+    const config = await loadRawConfig(root);
+    const services = normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services);
+    const matched = services.find((entry) => serviceConfigKey(entry) === serviceId);
+    return matched?.baseUrl;
+  } catch {
+    return undefined;
   }
 }
 
@@ -751,6 +948,183 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       // Block until aborted
       await new Promise(() => {});
     });
+  });
+
+  // --- Model discovery ---
+
+  app.get("/api/v1/services", async (c) => {
+    const secrets = await loadSecrets(root);
+
+    const SERVICE_KEYS = [
+      "openai", "anthropic", "deepseek", "moonshot", "minimax",
+      "bailian", "zhipu", "siliconflow", "ppio", "openrouter", "ollama",
+    ];
+
+    // Fast: only check connection status from secrets, no external API calls
+    const services = SERVICE_KEYS.map((key) => {
+      const preset = resolveServicePreset(key);
+      return {
+        service: key,
+        label: preset?.label ?? key,
+        connected: Boolean(secrets.services[key]?.apiKey),
+      };
+    });
+
+    // Add custom services from inkos.json
+    try {
+      const config = await loadRawConfig(root);
+      for (const svc of normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services)) {
+        if (svc.service === "custom") {
+          const secretKey = `custom:${svc.name}`;
+          services.push({
+            service: secretKey,
+            label: svc.name ?? "Custom",
+            connected: Boolean(secrets.services[secretKey]?.apiKey),
+          });
+        }
+      }
+    } catch { /* no config file */ }
+
+    return c.json({ services });
+  });
+
+  app.get("/api/v1/services/config", async (c) => {
+    const config = await loadRawConfig(root);
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const services = normalizeServiceConfig(llm.services);
+    const envConfig = await readEnvConfigStatus(root);
+    return c.json({
+      services,
+      defaultModel: llm.defaultModel ?? null,
+      configSource: normalizeConfigSource(llm.configSource),
+      envConfig,
+    });
+  });
+
+  app.put("/api/v1/services/config", async (c) => {
+    const body = await c.req.json<{ services?: unknown; defaultModel?: string; configSource?: LLMConfigSource }>();
+    const config = await loadRawConfig(root);
+    config.llm = config.llm ?? {};
+    const llm = config.llm as Record<string, unknown>;
+    if (body.services !== undefined) {
+      const existingServices = normalizeServiceConfig(llm.services);
+      const incomingServices = normalizeServiceConfig(body.services);
+      llm.services = mergeServiceConfig(existingServices, incomingServices);
+    }
+    if (body.defaultModel !== undefined) {
+      llm.defaultModel = body.defaultModel;
+    }
+    if (body.configSource !== undefined) {
+      llm.configSource = normalizeConfigSource(body.configSource);
+    }
+    await saveRawConfig(root, config);
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/v1/services/:service/test", async (c) => {
+    const service = c.req.param("service");
+    const { apiKey, baseUrl, apiFormat, stream } = await c.req.json<{
+      apiKey: string;
+      baseUrl?: string;
+      apiFormat?: "chat" | "responses";
+      stream?: boolean;
+    }>();
+
+    if (!apiKey?.trim()) {
+      return c.json({ ok: false, error: "API Key 不能为空" }, 400);
+    }
+
+    const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service, baseUrl);
+    if (!resolvedBaseUrl) {
+      return c.json({ ok: false, error: `未知服务商: ${service}` }, 400);
+    }
+
+    // Try /models API — validates key + discovers models in one call
+    const modelsUrl = resolvedBaseUrl.replace(/\/$/, "") + "/models";
+    let models: Array<{ id: string; name: string }> = [];
+    try {
+      const res = await fetch(modelsUrl, {
+        headers: { Authorization: `Bearer ${apiKey.trim()}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        return c.json({ ok: false, error: "API Key 无效，请检查后重试" }, 400);
+      }
+
+      if (res.ok) {
+        const json = await res.json() as { data?: Array<{ id: string; owned_by?: string }> };
+        models = (json.data ?? []).map((m) => ({ id: m.id, name: m.id }));
+      }
+    } catch (err: any) {
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+        return c.json({ ok: false, error: `连接超时：无法访问 ${modelsUrl}` }, 400);
+      }
+      // Network error — continue to fallback
+    }
+
+    // /models unavailable (404 etc.) — fallback to pi-ai built-in model list
+    if (models.length === 0) {
+      const builtIn = await listModelsForService(service);
+      models = builtIn.map((m) => ({ id: m.id, name: m.name }));
+    }
+
+    if (models.length === 0) {
+      return c.json({ ok: false, error: "未找到可用模型" }, 400);
+    }
+
+    return c.json({ ok: true, modelCount: models.length, models: models.slice(0, 50) });
+  });
+
+  app.put("/api/v1/services/:service/secret", async (c) => {
+    const service = c.req.param("service");
+    const { apiKey } = await c.req.json<{ apiKey: string }>();
+    const secrets = await loadSecrets(root);
+    if (apiKey?.trim()) {
+      secrets.services[service] = { apiKey: apiKey.trim() };
+    } else {
+      delete secrets.services[service];
+    }
+    await saveSecrets(root, secrets);
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/v1/services/:service/secret", async (c) => {
+    const service = c.req.param("service");
+    const secrets = await loadSecrets(root);
+    return c.json({
+      apiKey: secrets.services[service]?.apiKey ?? "",
+    });
+  });
+
+  app.get("/api/v1/services/:service/models", async (c) => {
+    const service = c.req.param("service");
+    const apiKey = c.req.query("apiKey") || await getServiceApiKey(root, service);
+
+    // No key = no models (don't fallback to built-in list)
+    if (!apiKey) return c.json({ models: [] });
+
+    const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service);
+    if (!resolvedBaseUrl) return c.json({ models: [] });
+
+    // Call real /models API, fallback to pi-ai built-in list
+    let models: Array<{ id: string; name: string }> = [];
+    try {
+      const modelsUrl = resolvedBaseUrl.replace(/\/$/, "") + "/models";
+      const res = await fetch(modelsUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        const json = await res.json() as { data?: Array<{ id: string }> };
+        models = (json.data ?? []).map((m) => ({ id: m.id, name: m.id }));
+      }
+    } catch { /* timeout or network error */ }
+    if (models.length === 0) {
+      const builtIn = await listModelsForService(service, apiKey);
+      models = builtIn.map((m) => ({ id: m.id, name: m.name }));
+    }
+    return c.json({ models });
   });
 
   // --- Project info ---

@@ -3,6 +3,7 @@ import type { InteractionRequest } from "./intents.js";
 export interface NaturalLanguageRoutingContext {
   readonly activeBookId?: string;
   readonly hasCreationDraft?: boolean;
+  readonly hasFailed?: boolean;
 }
 
 export function routeNaturalLanguageIntent(
