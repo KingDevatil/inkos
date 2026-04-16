@@ -159,10 +159,15 @@ export function App() {
             {/* View Mode Toggle */}
             <button
               onClick={toggleViewMode}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-all shadow-sm ${
+                viewMode === "chat-first"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10"
+              }`}
               title={viewMode === "classic" ? "切换到对话优先模式" : "切换到经典模式"}
             >
-              <LayoutTemplate size={16} />
+              <LayoutTemplate size={14} />
+              <span>{viewMode === "chat-first" ? "对话模式" : "经典模式"}</span>
             </button>
 
             <button
