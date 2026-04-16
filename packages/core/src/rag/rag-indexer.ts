@@ -3,7 +3,7 @@
  * 支持延迟写入、批量索引、增量更新
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { RAGManager } from "./rag-manager.js";
@@ -322,8 +322,15 @@ export class RAGIndexer {
         options?.onProgress?.(i + 1, chapters.length, `索引章节 ${chapter}`);
 
         try {
-          // 读取章节内容
-          const chapterPath = join(bookDir, "chapters", `chapter_${String(chapter).padStart(3, "0")}.md`);
+          // 读取章节内容 - 使用正确的文件名格式 0001_标题.md
+          const chaptersDir = join(bookDir, "chapters");
+          const files = await readdir(chaptersDir);
+          const paddedNum = String(chapter).padStart(4, "0");
+          const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+          if (!chapterFile) {
+            throw new Error(`Chapter ${chapter} file not found in ${chaptersDir}`);
+          }
+          const chapterPath = join(chaptersDir, chapterFile);
           const content = await readFile(chapterPath, "utf-8");
 
           // 添加延迟索引操作
