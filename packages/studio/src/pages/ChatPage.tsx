@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
@@ -30,6 +30,7 @@ import {
   Message,
   MessageContent,
 } from "../components/ai-elements/message";
+import { filterModelGroups, shouldUseFreshBookCreateSession } from "./chat-page-state";
 
 // -- Types --
 
@@ -153,9 +154,14 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     return () => { es.close(); };
   }, [bookCreating, setCreateProgress]);
 
-  // Load session messages on mount or when activeBookId changes
+  // Load session messages on mount or when activeBookId changes.
+  // Book-create mode should always start from a fresh chat.
   useEffect(() => {
-    useChatStore.getState().loadSession(activeBookId);
+    if (shouldUseFreshBookCreateSession(activeBookId)) {
+      useChatStore.setState({ currentSessionId: null, messages: [], input: "", _activeStream: null });
+    } else {
+      useChatStore.getState().loadSession(activeBookId);
+    }
   }, [activeBookId]);
 
   const onSend = (text: string) => {
@@ -398,35 +404,13 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                       </span>
                       <ChevronDown size={14} className="text-muted-foreground" />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent side="top" align="start" className="w-60 max-h-72 overflow-y-auto">
-                      {groupedModels.map((group) => (
-                        <div key={group.service}>
-                          <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                            {group.label}
-                          </div>
-                          {group.models.map((m) => {
-                            const isSelected = selectedModel === m.id && selectedService === group.service;
-                            return (
-                              <DropdownMenuItem
-                                key={`${group.service}:${m.id}`}
-                                onClick={() => setSelectedModel(m.id, group.service)}
-                                className={isSelected ? "bg-muted/50" : ""}
-                              >
-                                <div className="flex flex-1 items-center justify-between">
-                                  <span className="text-sm">{m.name ?? m.id}</span>
-                                  {isSelected && <Check size={14} className="text-primary shrink-0" />}
-                                </div>
-                              </DropdownMenuItem>
-                            );
-                          })}
-                        </div>
-                      ))}
-                      <div className="border-t border-border/30 mt-1">
-                        <DropdownMenuItem onClick={() => nav.toServices()} className="text-primary">
-                          管理服务商
-                        </DropdownMenuItem>
-                      </div>
-                    </DropdownMenuContent>
+                    <ModelPickerContent
+                      groupedModels={groupedModels}
+                      selectedModel={selectedModel}
+                      selectedService={selectedService}
+                      onSelect={setSelectedModel}
+                      onManage={() => nav.toServices()}
+                    />
                   </DropdownMenu>
                 ) : (
                   <button
@@ -442,5 +426,72 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
         </div>
       </div>
     </div>
+  );
+}
+
+function ModelPickerContent({
+  groupedModels,
+  selectedModel,
+  selectedService,
+  onSelect,
+  onManage,
+}: {
+  groupedModels: ReadonlyArray<{ service: string; label: string; models: ReadonlyArray<{ id: string; name?: string }> }>;
+  selectedModel: string | null;
+  selectedService: string | null;
+  onSelect: (model: string, service: string) => void;
+  onManage: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => filterModelGroups(groupedModels, search), [groupedModels, search]);
+
+  return (
+    <DropdownMenuContent side="top" align="start" className="w-64 max-h-80 flex flex-col">
+      <div className="px-2 py-1.5 border-b border-border/30">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索模型..."
+          className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/40"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+      </div>
+      <div className="overflow-y-auto flex-1">
+        {filtered.map((group) => (
+          <div key={group.service}>
+            <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              {group.label}
+            </div>
+            {group.models.map((m) => {
+              const isSelected = selectedModel === m.id && selectedService === group.service;
+              return (
+                <DropdownMenuItem
+                  key={`${group.service}:${m.id}`}
+                  onClick={() => onSelect(m.id, group.service)}
+                  className={isSelected ? "bg-muted/50" : ""}
+                >
+                  <div className="flex flex-1 items-center justify-between">
+                    <span className="text-sm">{m.name ?? m.id}</span>
+                    {isSelected && <Check size={14} className="text-primary shrink-0" />}
+                  </div>
+                </DropdownMenuItem>
+              );
+            })}
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <div className="px-3 py-4 text-xs text-muted-foreground/50 text-center italic">
+            无匹配模型
+          </div>
+        )}
+      </div>
+      <div className="border-t border-border/30">
+        <DropdownMenuItem onClick={onManage} className="text-primary">
+          管理服务商
+        </DropdownMenuItem>
+      </div>
+    </DropdownMenuContent>
   );
 }
