@@ -271,34 +271,6 @@ export {
   type AgentSessionResult,
 } from "./agent/index.js";
 
-// Interaction
-export {
-  type InteractionEvent,
-  type ExecutionState,
-  type ExecutionStatus,
-  type InteractionRuntimeTools,
-  type BookCreationDraft,
-  type InteractionSession,
-  type PendingDecision,
-  type InteractionMessage,
-  type AutomationMode,
-  type InteractionIntentType,
-  appendInteractionMessage,
-  appendInteractionEvent,
-  bindActiveBook,
-  clearPendingDecision,
-  updateCreationDraft,
-  clearCreationDraft,
-  updateAutomationMode,
-  routeNaturalLanguageIntent,
-  createProjectSession,
-  loadProjectSession,
-  persistProjectSession,
-  resolveSessionActiveBook,
-} from "./interaction/index.js";
-export { processProjectInteractionInput } from "./interaction/project-control.js";
-export { createInteractionToolsFromDeps } from "./interaction/project-tools.js";
-
 // RAG
 export {
   createRAGManager,
