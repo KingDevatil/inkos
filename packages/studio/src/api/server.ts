@@ -2142,20 +2142,28 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           });
           
           try {
-            const chapterPath = join(bookDir, "chapters", `chapter_${String(chapter).padStart(3, "0")}.md`);
+            // 使用正确的文件名格式 0001_标题.md
+            const chaptersDir = join(bookDir, "chapters");
+            const files = await readdir(chaptersDir);
+            const paddedNum = String(chapter).padStart(4, "0");
+            const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+            if (!chapterFile) {
+              throw new Error(`Chapter ${chapter} file not found in ${chaptersDir}`);
+            }
+            const chapterPath = join(chaptersDir, chapterFile);
             const content = await readFile(chapterPath, "utf-8");
             await indexer.indexChapter(chapter, content, { chapter });
             results.push({ chapter, success: true });
           } catch (error) {
-            results.push({ 
-              chapter, 
-              success: false, 
-              error: error instanceof Error ? error.message : String(error) 
+            results.push({
+              chapter,
+              success: false,
+              error: error instanceof Error ? error.message : String(error)
             });
           }
         }
       }
-      
+
       broadcast("rag:supplement:complete", { 
         bookId: id, 
         checked: checkResult.summary.total,
@@ -2289,19 +2297,27 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         });
         
         try {
-          const chapterPath = join(bookDir, "chapters", `chapter_${String(chapter).padStart(3, "0")}.md`);
+          // 使用正确的文件名格式 0001_标题.md
+          const chaptersDir = join(bookDir, "chapters");
+          const files = await readdir(chaptersDir);
+          const paddedNum = String(chapter).padStart(4, "0");
+          const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+          if (!chapterFile) {
+            throw new Error(`Chapter ${chapter} file not found in ${chaptersDir}`);
+          }
+          const chapterPath = join(chaptersDir, chapterFile);
           const content = await readFile(chapterPath, "utf-8");
           await indexer.indexChapter(chapter, content, { chapter });
           results.push({ chapter, success: true });
         } catch (error) {
-          results.push({ 
-            chapter, 
-            success: false, 
-            error: error instanceof Error ? error.message : String(error) 
+          results.push({
+            chapter,
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
           });
         }
       }
-      
+
       broadcast("rag:rebuild:complete", { 
         bookId: id, 
         total: chapterNumbers.length,
