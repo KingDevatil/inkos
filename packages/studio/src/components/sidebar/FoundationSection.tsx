@@ -1,57 +1,61 @@
-import { BookOpen, FileText, Scroll, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
+import { FileText } from "lucide-react";
+import { useChatStore } from "../../store/chat";
+import { fetchJson } from "../../hooks/use-api";
 import { SidebarCard } from "./SidebarCard";
 
-interface FoundationFile {
-  readonly id: string;
-  readonly name: string;
-  readonly description?: string;
+const FOUNDATION_FILES: ReadonlyArray<{ file: string; label: string }> = [
+  { file: "story_bible.md", label: "世界观设定" },
+  { file: "volume_outline.md", label: "卷纲规划" },
+  { file: "book_rules.md", label: "叙事规则" },
+  { file: "current_state.md", label: "状态卡" },
+  { file: "pending_hooks.md", label: "伏笔池" },
+  { file: "subplot_board.md", label: "支线进度" },
+  { file: "emotional_arcs.md", label: "感情线" },
+  { file: "character_matrix.md", label: "角色矩阵" },
+];
+
+interface TruthFileInfo {
+  name: string;
+  size: number;
 }
 
 interface FoundationSectionProps {
-  readonly files?: FoundationFile[];
-  readonly onFileClick?: (fileId: string) => void;
+  readonly bookId: string;
 }
 
-const DEFAULT_FILES: FoundationFile[] = [
-  { id: "story_bible", name: "世界观设定", description: "故事背景、规则、势力" },
-  { id: "volume_outline", name: "卷纲规划", description: "分卷结构、章节安排" },
-  { id: "book_rules", name: "本书规则", description: "写作规范、风格要求" },
-  { id: "style_guide", name: "文风指南", description: "语言风格、叙事特点" },
-];
+export function FoundationSection({ bookId }: FoundationSectionProps) {
+  const [files, setFiles] = useState<ReadonlyArray<TruthFileInfo>>([]);
+  const openArtifact = useChatStore((s) => s.openArtifact);
+  const bookDataVersion = useChatStore((s) => s.bookDataVersion);
 
-export function FoundationSection({ files = DEFAULT_FILES, onFileClick }: FoundationSectionProps) {
-  const getIcon = (id: string) => {
-    switch (id) {
-      case "story_bible":
-        return <BookOpen className="w-4 h-4" />;
-      case "volume_outline":
-        return <Scroll className="w-4 h-4" />;
-      case "book_rules":
-        return <Settings className="w-4 h-4" />;
-      default:
-        return <FileText className="w-4 h-4" />;
-    }
-  };
+  useEffect(() => {
+    fetchJson<{ files: TruthFileInfo[] }>(`/books/${bookId}/truth`)
+      .then((data) => setFiles(data.files))
+      .catch(() => setFiles([]));
+  }, [bookId, bookDataVersion]);
+
+  const available = FOUNDATION_FILES.filter((f) =>
+    files.some((tf) => tf.name === f.file),
+  );
+
+  if (available.length === 0) return null;
 
   return (
-    <SidebarCard title="核心文件" defaultOpen={true}>
-      <div className="space-y-1">
-        {files.map((file) => (
-          <button
-            key={file.id}
-            onClick={() => onFileClick?.(file.id)}
-            className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-lg hover:bg-accent transition-colors text-left"
-          >
-            <span className="text-muted-foreground">{getIcon(file.id)}</span>
-            <div className="flex-1 min-w-0">
-              <div className="font-medium truncate">{file.name}</div>
-              {file.description && (
-                <div className="text-xs text-muted-foreground truncate">{file.description}</div>
-              )}
-            </div>
-          </button>
+    <SidebarCard title="核心文件">
+      <ul className="space-y-1">
+        {available.map((item) => (
+          <li key={item.file}>
+            <button
+              onClick={() => openArtifact(item.file)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors font-['SimSun','Songti_SC','STSong',serif]"
+            >
+              <FileText size={14} className="shrink-0 text-muted-foreground/60" />
+              <span className="truncate">{item.label}</span>
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
     </SidebarCard>
   );
 }
