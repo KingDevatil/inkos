@@ -192,61 +192,79 @@ export function App() {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto scroll-smooth">
-          <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
-            {route.page === "dashboard" && <Dashboard nav={nav} sse={sse} theme={theme} t={t} />}
-            {/* Book route: different behavior based on viewMode */}
-            {route.page === "book" && viewMode === "classic" && (
-              <BookDetail bookId={route.bookId} nav={nav} theme={theme} t={t} sse={sse} />
-            )}
-            {route.page === "book" && viewMode === "chat-first" && (
-              <div className="absolute inset-0 flex min-w-0">
-                <ChatPage
-                  activeBookId={route.bookId}
-                  nav={nav}
-                  theme={theme}
-                  t={t}
-                  sse={sse}
-                />
-              </div>
-            )}
-            {route.page === "book-create" && viewMode === "classic" && <BookCreate nav={nav} theme={theme} t={t} />}
-            {route.page === "book-create" && viewMode === "chat-first" && (
-              <div className="absolute inset-0 flex min-w-0">
-                <ChatPage
-                  activeBookId={undefined}
-                  nav={nav}
-                  theme={theme}
-                  t={t}
-                  sse={sse}
-                />
-              </div>
-            )}
-            {route.page === "chapter" && <ChapterReader bookId={route.bookId} chapterNumber={route.chapterNumber} nav={nav} theme={theme} t={t} />}
-            {route.page === "chat" && (
-              <div className="absolute inset-0 flex min-w-0">
-                <ChatPage
-                  activeBookId={activeBookId}
-                  nav={nav}
-                  theme={theme}
-                  t={t}
-                  sse={sse}
-                />
-              </div>
-            )}
-            {route.page === "analytics" && <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />}
-            {route.page === "config" && <ConfigView nav={nav} theme={theme} t={t} />}
-            {route.page === "truth" && <TruthFiles bookId={route.bookId} nav={nav} theme={theme} t={t} />}
-            {route.page === "daemon" && <DaemonControl nav={nav} theme={theme} t={t} sse={sse} />}
-            {route.page === "logs" && <LogViewer nav={nav} theme={theme} t={t} />}
-            {route.page === "genres" && <GenreManager nav={nav} theme={theme} t={t} />}
-            {route.page === "style" && <StyleManager nav={nav} theme={theme} t={t} />}
-            {route.page === "import" && <ImportManager nav={nav} theme={theme} t={t} />}
-            {route.page === "radar" && <RadarView nav={nav} theme={theme} t={t} />}
-            {route.page === "doctor" && <DoctorView nav={nav} theme={theme} t={t} />}
-            {route.page === "services" && <ServiceListPage nav={nav} />}
-            {route.page === "service-detail" && <ServiceDetailPage serviceId={route.serviceId} nav={nav} />}
-          </div>
+        <main className="flex-1 relative overflow-y-auto scroll-smooth">
+          {/* Chat-first mode: full-screen layout */}
+          {(route.page === "book" && viewMode === "chat-first") && (
+            <div className="absolute inset-0 flex min-w-0">
+              <ChatPage
+                activeBookId={route.bookId}
+                nav={nav}
+                theme={theme}
+                t={t}
+                sse={sse}
+              />
+            </div>
+          )}
+          {(route.page === "book-create" && viewMode === "chat-first") && (
+            <div className="absolute inset-0 flex min-w-0">
+              <ChatPage
+                activeBookId={undefined}
+                nav={nav}
+                theme={theme}
+                t={t}
+                sse={sse}
+              />
+            </div>
+          )}
+          {route.page === "chat" && (
+            <div className="absolute inset-0 flex min-w-0">
+              <ChatPage
+                activeBookId={activeBookId}
+                nav={nav}
+                theme={theme}
+                t={t}
+                sse={sse}
+              />
+            </div>
+          )}
+          {/* Classic mode: constrained layout */}
+          {((route.page === "book" && viewMode === "classic") ||
+            (route.page === "book-create" && viewMode === "classic") ||
+            route.page === "dashboard" ||
+            route.page === "chapter" ||
+            route.page === "analytics" ||
+            route.page === "config" ||
+            route.page === "truth" ||
+            route.page === "daemon" ||
+            route.page === "logs" ||
+            route.page === "genres" ||
+            route.page === "style" ||
+            route.page === "import" ||
+            route.page === "radar" ||
+            route.page === "doctor" ||
+            route.page === "services" ||
+            route.page === "service-detail") && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              {route.page === "dashboard" && <Dashboard nav={nav} sse={sse} theme={theme} t={t} />}
+              {route.page === "book" && viewMode === "classic" && (
+                <BookDetail bookId={route.bookId} nav={nav} theme={theme} t={t} sse={sse} />
+              )}
+              {route.page === "book-create" && viewMode === "classic" && <BookCreate nav={nav} theme={theme} t={t} />}
+              {route.page === "chapter" && <ChapterReader bookId={route.bookId} chapterNumber={route.chapterNumber} nav={nav} theme={theme} t={t} />}
+              {route.page === "analytics" && <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />}
+              {route.page === "config" && <ConfigView nav={nav} theme={theme} t={t} />}
+              {route.page === "truth" && <TruthFiles bookId={route.bookId} nav={nav} theme={theme} t={t} />}
+              {route.page === "daemon" && <DaemonControl nav={nav} theme={theme} t={t} sse={sse} />}
+              {route.page === "logs" && <LogViewer nav={nav} theme={theme} t={t} />}
+              {route.page === "genres" && <GenreManager nav={nav} theme={theme} t={t} />}
+              {route.page === "style" && <StyleManager nav={nav} theme={theme} t={t} />}
+              {route.page === "import" && <ImportManager nav={nav} theme={theme} t={t} />}
+              {route.page === "radar" && <RadarView nav={nav} theme={theme} t={t} />}
+              {route.page === "doctor" && <DoctorView nav={nav} theme={theme} t={t} />}
+              {route.page === "services" && <ServiceListPage nav={nav} />}
+              {route.page === "service-detail" && <ServiceDetailPage serviceId={route.serviceId} nav={nav} />}
+            </div>
+          )}
         </main>
       </div>
 
