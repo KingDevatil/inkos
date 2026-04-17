@@ -7,7 +7,7 @@
 # Stage 1: Dependencies
 # 只安装依赖，不构建
 # --------------------
-FROM node:20-bookworm AS deps
+FROM node:22-bookworm AS deps
 
 WORKDIR /app
 
@@ -43,7 +43,7 @@ RUN pnpm --filter @actalk/inkos-core add -D @types/node@^22.0.0
 # Stage 2: Builder
 # 构建项目
 # --------------------
-FROM node:20-bookworm AS builder
+FROM node:22-bookworm AS builder
 
 WORKDIR /app
 
@@ -66,7 +66,7 @@ RUN pnpm run build
 # Stage 3: Runtime
 # 运行时环境
 # --------------------
-FROM node:20-bookworm AS runtime
+FROM node:22-bookworm AS runtime
 
 WORKDIR /app
 
