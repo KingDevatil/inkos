@@ -687,7 +687,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.post("/api/books/:id/regenerate-outline", async (c) => {
     const id = c.req.param("id");
-    const body = await c.req.json<{ intent?: string; rewriteLevel?: "low" | "medium" | "high" }>().catch(() => ({ intent: "", rewriteLevel: "medium" }));
+    const body = await c.req.json<{ intent?: string; rewriteLevel?: "low" | "medium" | "high" | "extend" }>().catch(() => ({ intent: "", rewriteLevel: "medium" }));
 
     broadcast("outline:regenerate:start", { bookId: id });
 
@@ -696,7 +696,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       // 使用新的 regeneratePlotPlanning 方法生成三件套，传入重写幅度
       await pipeline.regeneratePlotPlanning(id, { 
         instruction: body.intent,
-        rewriteLevel: body.rewriteLevel as "low" | "medium" | "high" | undefined
+        rewriteLevel: body.rewriteLevel as "low" | "medium" | "high" | "extend" | undefined
       });
       broadcast("outline:regenerate:complete", { bookId: id });
       return c.json({ ok: true, message: "Plot planning regenerated successfully" });

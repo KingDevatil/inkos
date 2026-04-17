@@ -436,7 +436,7 @@ export function BookDetail({
   // 卷纲重生成状态
   const [showVolumeOutlineRegenerate, setShowVolumeOutlineRegenerate] = useState(false);
   const [authorIntent, setAuthorIntent] = useState("");
-  const [rewriteLevel, setRewriteLevel] = useState<"low" | "medium" | "high">("medium");
+  const [rewriteLevel, setRewriteLevel] = useState<"low" | "medium" | "high" | "extend">("medium");
   const [regeneratingVolumeOutline, setRegeneratingVolumeOutline] = useState(false);
   const [volumeOutlineRunId, setVolumeOutlineRunId] = useState<string | null>(null);
   const [generatedVolumeOutline, setGeneratedVolumeOutline] = useState("");
@@ -2472,7 +2472,7 @@ export function BookDetail({
               {/* Rewrite Level Selection */}
               <div>
                 <label className="block text-sm font-medium mb-2">重写幅度</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => setRewriteLevel("low")}
                     className={`px-3 py-2.5 rounded-md text-sm text-left transition-all ${
@@ -2505,6 +2505,17 @@ export function BookDetail({
                   >
                     高
                     <div className="text-xs text-muted-foreground mt-1">重新设计情节结构</div>
+                  </button>
+                  <button
+                    onClick={() => setRewriteLevel("extend")}
+                    className={`px-3 py-2.5 rounded-md text-sm text-left transition-all ${
+                      rewriteLevel === "extend"
+                        ? "bg-primary/15 text-primary border border-primary/30 font-medium"
+                        : "bg-secondary text-secondary-foreground border border-transparent hover:border-border"
+                    }`}
+                  >
+                    扩写
+                    <div className="text-xs text-muted-foreground mt-1">删除结尾，续写新剧情</div>
                   </button>
                 </div>
               </div>

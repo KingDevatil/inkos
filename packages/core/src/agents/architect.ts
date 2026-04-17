@@ -1520,11 +1520,12 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
       storyBible: string;
       characters: string;
       bookRules?: string;
+      originalVolumeOutline?: string;
     },
     options?: {
       instruction?: string;
       temperature?: number;
-      rewriteLevel?: "low" | "medium" | "high";
+      rewriteLevel?: "low" | "medium" | "high" | "extend";
     }
   ): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
@@ -1548,6 +1549,9 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
       high: resolvedLanguage === "en"
         ? "HIGH rewrite level: Completely redesign the plot structure, create a brand new storyline that fits the existing settings."
         : "高重写幅度：完全重新设计情节结构，创建与现有设定兼容的全新剧情线。",
+      extend: resolvedLanguage === "en"
+        ? "EXTEND mode: Keep all existing plot up to a certain point, remove the current ending, and continue expanding the story with new subsequent plotlines that maintain consistency with the established settings and characters."
+        : "扩写续写模式：保留截至某点的所有现有剧情，删除当前结尾，继续扩展后续剧情，确保与已建立的设定和角色保持一致。",
     };
     const rewriteLevelBlock = options?.rewriteLevel
       ? `\n\n## Rewrite Level\n${rewriteLevelDesc[options.rewriteLevel]}\n`
@@ -1564,6 +1568,11 @@ ${existingFoundation.characters}
 
 ## Book Rules (Writing Constraints - MUST FOLLOW)
 ${existingFoundation.bookRules || "(No specific rules)"}
+
+## Original Volume Outline (Reference Only)
+The following is the original volume outline for reference. Depending on the rewrite level, you may use it as a basis for modification or completely redesign:
+
+${existingFoundation.originalVolumeOutline || "(No original outline available)"}
 
 ## Book Info
 - Title: ${book.title}
@@ -1627,6 +1636,11 @@ ${existingFoundation.characters}
 
 【本书规则】（必须遵守）
 ${existingFoundation.bookRules || "（无特定规则）"}
+
+【原始卷纲】（仅供参考）
+以下是原始卷纲，仅供参考。根据重写幅度，你可以在其基础上修改或完全重新设计：
+
+${existingFoundation.originalVolumeOutline || "（无原始卷纲）"}
 
 【书籍信息】
 - 书名：${book.title}

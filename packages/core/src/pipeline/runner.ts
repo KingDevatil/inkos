@@ -376,7 +376,7 @@ export class PipelineRunner {
     bookId: string,
     options?: {
       instruction?: string;
-      rewriteLevel?: "low" | "medium" | "high";
+      rewriteLevel?: "low" | "medium" | "high" | "extend";
     }
   ): Promise<void> {
     const book = await this.state.loadBookConfig(bookId);
@@ -393,14 +393,17 @@ export class PipelineRunner {
     const characters = await this.readCharacters(bookId);
     const bookRules = await this.readStoryFile(bookId, "book_rules.md");
 
-    // 2. 备份现有剧情规划文件
+    // 2. 读取原始卷纲（用于低/中/高/extend幅度参考）
+    const originalVolumeOutline = await this.readStoryFile(bookId, "volume_outline.md");
+
+    // 3. 备份现有剧情规划文件
     await this.backupRuntimeFiles(bookId);
 
-    // 3. 调用 architect.regeneratePlotPlanning
+    // 4. 调用 architect.regeneratePlotPlanning
     const architect = new ArchitectAgent(this.agentCtxFor("architect", bookId));
     const result = await architect.regeneratePlotPlanning(
       book,
-      { storyBible, characters, bookRules },
+      { storyBible, characters, bookRules, originalVolumeOutline },
       { instruction: options?.instruction, rewriteLevel: options?.rewriteLevel }
     );
 
