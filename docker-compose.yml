@@ -18,6 +18,11 @@ services:
     volumes:
       - ./books:/app/books
       - ./logs:/app/logs
+      # 使用命名卷缓存依赖，避免重复安装
+      - node_modules_cache:/app/node_modules
+      - node_modules_core:/app/packages/core/node_modules
+      - node_modules_studio:/app/packages/studio/node_modules
+      - node_modules_cli:/app/packages/cli/node_modules
     environment:
       - INKOS_PROJECT_ROOT=/app/books
       - INKOS_STUDIO_PORT=13001
@@ -27,3 +32,10 @@ services:
       - INKOS_LLM_MAX_TOKENS=${INKOS_LLM_MAX_TOKENS:-4096}
       - INKOS_LLM_TEMPERATURE=${INKOS_LLM_TEMPERATURE:-0.7}
     restart: unless-stopped
+
+# 定义命名卷，持久化存储依赖
+volumes:
+  node_modules_cache:
+  node_modules_core:
+  node_modules_studio:
+  node_modules_cli:
