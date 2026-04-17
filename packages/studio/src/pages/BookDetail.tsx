@@ -1168,6 +1168,13 @@ export function BookDetail({
           重新生成大纲
         </button>
         <button
+          onClick={() => setShowVolumeOutlineRegenerate(true)}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+        >
+          <RefreshCw size={14} />
+          重生成卷纲
+        </button>
+        <button
           onClick={loadAuditConfig}
           disabled={loadingAuditConfig}
           className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50 disabled:opacity-50"
