@@ -12,10 +12,6 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.x-3178C6.svg?logo=typescript&logoColor=white" alt="TypeScript"></a>
 </p>
 
-<p align="center">
-  <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
-</p>
-
 
 ## 快速开始
 
