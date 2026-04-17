@@ -2447,7 +2447,11 @@ export function BookDetail({
                   <textarea
                     value={authorIntent}
                     onChange={(e) => setAuthorIntent(e.target.value)}
-                    placeholder="请输入你的创作意图，例如：\n- 希望增加更多动作场景\n- 强化主角与反派的冲突\n- 调整故事节奏，加快情节发展\n- 增加更多情感描写"
+                    placeholder={`请输入你的创作意图，例如：
+- 希望增加更多动作场景
+- 强化主角与反派的冲突
+- 调整故事节奏，加快情节发展
+- 增加更多情感描写`}
                     className={`w-full ${c.input} rounded-md px-4 py-3 focus:outline-none min-h-[200px] resize-y`}
                   />
                   {authorIntent && (
