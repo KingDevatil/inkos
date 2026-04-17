@@ -1509,4 +1509,178 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
 
     return currentState + hooksHeader + pendingHooks;
   }
+
+  /**
+   * 基于现有设定重新生成剧情规划（卷纲、当前状态、待填坑）
+   * 用于：对初始卷纲不满意，但满意设定时重新规划剧情
+   */
+  async regeneratePlotPlanning(
+    book: BookConfig,
+    existingFoundation: {
+      storyBible: string;
+      characters: string;
+      bookRules?: string;
+    },
+    options?: {
+      instruction?: string;
+      temperature?: number;
+    }
+  ): Promise<ArchitectOutput> {
+    const { profile: gp, body: genreBody } =
+      await readGenreProfile(this.ctx.projectRoot, book.genre);
+    const resolvedLanguage = book.language ?? gp.language;
+
+    const instructionBlock = options?.instruction
+      ? (resolvedLanguage === "en"
+          ? `\n\n## Author's Additional Requirements\n${options.instruction}\n`
+          : `\n\n## 作者的额外要求\n${options.instruction}\n`)
+      : "";
+
+    const systemPrompt = resolvedLanguage === "en"
+      ? `You are a professional web-fiction architect. Your task is to regenerate the plot planning (volume outline, current state, pending hooks) based on the existing story settings.
+
+## Story Bible (World Settings - MUST PRESERVE)
+${existingFoundation.storyBible}
+
+## Character Settings (MUST PRESERVE)
+${existingFoundation.characters}
+
+## Book Rules (Writing Constraints - MUST FOLLOW)
+${existingFoundation.bookRules || "(No specific rules)"}
+
+## Book Info
+- Title: ${book.title}
+- Genre: ${book.genre}
+- Platform: ${book.platform}
+- Language: ${book.language}
+- Target Chapters: ${book.targetChapters}
+- Chapter Word Count: ${book.chapterWordCount}
+${instructionBlock}
+
+## Your Task
+Based on the above settings (which you MUST preserve exactly), regenerate the complete plot planning:
+
+1. **volume_outline.md** - Volume/chapter structure with:
+   - Volume divisions and themes
+   - Chapter ranges for each volume
+   - Core conflicts and turning points
+   - Ensure pacing fits the target platform
+
+2. **current_state.md** - Current narrative state:
+   - Current plot position
+   - Immediate challenges
+   - Active story threads
+
+3. **pending_hooks.md** - Pending plot hooks:
+   - All planted hooks that need payoff
+   - Expected resolution chapters
+   - Hook types and statuses
+
+## Output Format
+Use the following exact section markers:
+
+=== story_bible ===
+(Just output the original story bible content unchanged)
+
+=== volume_outline ===
+(Regenerated volume outline)
+
+=== book_rules ===
+(Just output the original book rules unchanged)
+
+=== current_state ===
+(Regenerated current state)
+
+=== pending_hooks ===
+(Regenerated pending hooks in table format)
+
+## Important Rules
+1. DO NOT modify or extend the story bible - preserve it exactly
+2. DO NOT modify character settings - preserve them exactly
+3. DO follow the book rules in your new plot planning
+4. Create a fresh plot structure that works with the existing settings
+5. Ensure the new outline has clear progression and satisfying pacing`
+      : `你是一位专业的网络小说架构师。你的任务是基于现有设定重新生成剧情规划（卷纲、当前状态、待填坑）。
+
+【世界观设定】（必须保留）
+${existingFoundation.storyBible}
+
+【角色设定】（必须保留）
+${existingFoundation.characters}
+
+【本书规则】（必须遵守）
+${existingFoundation.bookRules || "（无特定规则）"}
+
+【书籍信息】
+- 书名：${book.title}
+- 类型：${book.genre}
+- 平台：${book.platform}
+- 语言：${book.language}
+- 目标章节数：${book.targetChapters}
+- 每章字数：${book.chapterWordCount}
+${instructionBlock}
+
+【你的任务】
+基于以上设定（必须严格保留），重新生成完整的剧情规划：
+
+1. **volume_outline.md** - 卷纲规划：
+   - 分卷划分和主题
+   - 每卷的章节范围
+   - 核心冲突和转折点
+   - 确保节奏符合目标平台特点
+
+2. **current_state.md** - 当前状态：
+   - 当前剧情位置
+   - 当前面临的挑战
+   - 活跃的故事线
+
+3. **pending_hooks.md** - 待填坑清单：
+   - 所有已埋下待回收的伏笔
+   - 预期回收章节
+   - 伏笔类型和状态
+
+【输出格式】
+使用以下精确的章节标记：
+
+=== story_bible ===
+（直接输出原始世界观设定，不做修改）
+
+=== volume_outline ===
+（重新生成的卷纲）
+
+=== book_rules ===
+（直接输出原始本书规则，不做修改）
+
+=== current_state ===
+（重新生成的当前状态）
+
+=== pending_hooks ===
+（重新生成的待填坑清单，使用表格格式）
+
+【重要规则】
+1. 不要修改或扩展世界观设定 - 原样保留
+2. 不要修改角色设定 - 原样保留
+3. 在新的剧情规划中遵守本书规则
+4. 创建与现有设定兼容的全新剧情结构
+5. 确保新卷纲有清晰的推进和令人满意的节奏`;
+
+    this.ctx.logger?.info(`[regenerateOutline] Regenerating outline for book "${book.id}"`);
+
+    const response = await this.chat([
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: resolvedLanguage === "en"
+          ? `Please regenerate the complete plot planning for "${book.title}" based on the existing settings.`
+          : `请基于现有设定，为《${book.title}》重新生成完整的剧情规划。`,
+      },
+    ], { maxTokens: 32000, temperature: options?.temperature ?? 0.8 });
+
+    // Save to cache for debugging
+    const cache = new LlmOutputCache(this.ctx.projectRoot);
+    const tempFilePath = await cache.savePart(response.content, 0);
+    this.ctx.logger?.info(`[regenerateOutline] LLM output saved to: ${tempFilePath}`);
+
+    return this.parseSections(response.content);
+  }
 }

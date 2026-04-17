@@ -1,54 +1,36 @@
 import { Command } from "commander";
 import { PipelineRunner } from "@actalk/inkos-core";
-import { buildPipelineConfig, findProjectRoot, loadConfig, log, logError, resolveBookId, resolveContext } from "../utils.js";
+import { loadConfig, buildPipelineConfig, findProjectRoot } from "../utils.js";
 
 export const planCommand = new Command("plan")
-  .description("Plan chapter input artifacts");
+  .description("大纲管理相关命令");
 
 planCommand
-  .command("chapter")
-  .description("Generate chapter intent for the next chapter")
-  .argument("[book-id]", "Book ID (auto-detected if only one book)")
-  .option("--context <text>", "Chapter steering guidance")
-  .option("--context-file <path>", "Read guidance from file")
-  .option("--json", "Output JSON")
-  .option("-q, --quiet", "Suppress console output")
-  .action(async (bookIdArg: string | undefined, opts) => {
+  .command("regenerate")
+  .description("重新生成剧情规划（保留设定，重写卷纲/状态/待填坑）")
+  .argument("<bookId>", "书籍ID")
+  .option("-i, --instruction <text>", "额外的生成指导，如：优化节奏、增加反转等")
+  .action(async (bookId, options) => {
     try {
-      const config = await loadConfig({ requireApiKey: false });
       const root = findProjectRoot();
-      const bookId = await resolveBookId(bookIdArg, root);
-      const context = await resolveContext(opts);
+      const config = await loadConfig();
+      const runner = new PipelineRunner(buildPipelineConfig(config, root));
 
-      const pipeline = new PipelineRunner(
-        buildPipelineConfig(config, root, {
-          externalContext: context,
-          inputGovernanceMode: "v2",
-          quiet: opts.quiet,
-        }),
-      );
+      console.log(`\n即将重新生成 "${bookId}" 的剧情规划...`);
+      console.log("├─ 保留：story_bible.md、characters/、book_rules.md");
+      console.log("├─ 重写：volume_outline.md、current_state.md、pending_hooks.md");
+      console.log("├─ 更新：.volume-plans-meta.json");
+      console.log("└─ 清理：runtime/ 缓存");
+      console.log("");
 
-      const result = await pipeline.planChapter(bookId, context);
+      await runner.regeneratePlotPlanning(bookId, {
+        instruction: options.instruction,
+      });
 
-      if (opts.json) {
-        log(JSON.stringify(result, null, 2));
-      } else {
-        log(`Planned chapter ${result.chapterNumber} for "${bookId}"`);
-        log(`  Goal: ${result.goal}`);
-        log(`  Intent: ${result.intentPath}`);
-        if (result.conflicts.length > 0) {
-          log("  Conflicts:");
-          for (const conflict of result.conflicts) {
-            log(`    - ${conflict}`);
-          }
-        }
-      }
-    } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to plan chapter: ${e}`);
-      }
+      console.log(`\n✅ "${bookId}" 剧情规划重新生成完成！`);
+      console.log(`备份文件位于: backups/${bookId}/`);
+    } catch (error) {
+      console.error("\n❌ 重新生成失败:", error instanceof Error ? error.message : String(error));
       process.exit(1);
     }
   });

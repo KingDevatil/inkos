@@ -42,7 +42,7 @@ import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
 import { rewriteStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
 import { readFile, readdir, writeFile, mkdir, rename, rm, stat, copyFile, unlink, access } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import {
   parseStateDegradedReviewNote,
   resolveStateDegradedBaseStatus,
@@ -363,9 +363,155 @@ export class PipelineRunner {
     }
 
     this.logInfo(language, {
-      zh: "章节规划生成完成",
-      en: "Chapter plans generated successfully",
+        zh: "章节规划生成完成",
+        en: "Chapter plans generated successfully",
+      });
+    }
+
+  /**
+   * 基于现有设定重新生成剧情规划（卷纲、当前状态、待填坑）
+   * 用于：对初始卷纲不满意，但满意设定时重新规划剧情
+   */
+  async regeneratePlotPlanning(
+    bookId: string,
+    options?: {
+      instruction?: string;
+    }
+  ): Promise<void> {
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const language = await this.resolveBookLanguage(book);
+
+    this.logStage(language, {
+      zh: "重新生成剧情规划",
+      en: "Regenerating plot planning",
     });
+
+    // 1. 读取现有设定文件
+    const storyBible = await this.readStoryFile(bookId, "story_bible.md");
+    const characters = await this.readCharacters(bookId);
+    const bookRules = await this.readStoryFile(bookId, "book_rules.md");
+
+    // 2. 备份现有剧情规划文件
+    await this.backupRuntimeFiles(bookId);
+
+    // 3. 调用 architect.regeneratePlotPlanning
+    const architect = new ArchitectAgent(this.agentCtxFor("architect", bookId));
+    const result = await architect.regeneratePlotPlanning(
+      book,
+      { storyBible, characters, bookRules },
+      { instruction: options?.instruction }
+    );
+
+    // 4. 保存新文件
+    await this.writeStoryFile(bookId, "volume_outline.md", result.volumeOutline);
+    await this.writeStoryFile(bookId, "current_state.md", result.currentState);
+    await this.writeStoryFile(bookId, "pending_hooks.md", result.pendingHooks);
+
+    // 5. 解析 volume_outline 生成分卷元数据
+    const { volumePlans } = await architect.parseVolumeOutline(result.volumeOutline);
+
+    // 6. 保存 .volume-plans-meta.json
+    const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
+    await writeFile(metaPath, JSON.stringify({ volumePlans }, null, 2), "utf-8");
+
+    // 7. 清理 runtime 缓存
+    await this.clearRuntimeCache(bookId);
+
+    // 8. 更新 book.json
+    const bookConfig = await this.state.loadBookConfig(bookId);
+    bookConfig.updatedAt = new Date().toISOString();
+    await this.state.saveBookConfig(bookId, bookConfig);
+
+    this.logInfo(language, {
+      zh: "剧情规划重新生成完成",
+      en: "Plot planning regenerated successfully",
+    });
+  }
+
+  private async readStoryFile(bookId: string, fileName: string): Promise<string> {
+    try {
+      const bookDir = this.state.bookDir(bookId);
+      const content = await readFile(join(bookDir, "story", fileName), "utf-8");
+      return content;
+    } catch {
+      return "";
+    }
+  }
+
+  private async readCharacters(bookId: string): Promise<string> {
+    try {
+      const bookDir = this.state.bookDir(bookId);
+      const charactersDir = join(bookDir, "story", "characters");
+      const files = await readdir(charactersDir);
+      const mdFiles = files.filter(f => f.endsWith(".md"));
+      
+      let charactersContent = "";
+      for (const file of mdFiles) {
+        const content = await readFile(join(charactersDir, file), "utf-8");
+        charactersContent += `## ${file}\n${content}\n\n`;
+      }
+      return charactersContent;
+    } catch {
+      return "";
+    }
+  }
+
+  private async writeStoryFile(bookId: string, fileName: string, content: string): Promise<void> {
+    const bookDir = this.state.bookDir(bookId);
+    const filePath = join(bookDir, "story", fileName);
+    await writeFile(filePath, content, "utf-8");
+  }
+
+  private async backupRuntimeFiles(bookId: string): Promise<void> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupDir = join(this.config.projectRoot, "backups", bookId, timestamp);
+    
+    const filesToBackup = [
+      "story/volume_outline.md",
+      "story/current_state.md",
+      "story/pending_hooks.md",
+      "story/.volume-plans-meta.json",
+    ];
+    
+    for (const file of filesToBackup) {
+      const sourcePath = join(this.state.bookDir(bookId), file);
+      const targetPath = join(backupDir, file);
+      
+      try {
+        const content = await readFile(sourcePath, "utf-8");
+        await mkdir(dirname(targetPath), { recursive: true });
+        await writeFile(targetPath, content, "utf-8");
+      } catch (error) {
+        // 文件不存在则跳过
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+    }
+    
+    this.config.logger?.info(`[backupRuntimeFiles] Backed up to: ${backupDir}`);
+  }
+
+  private async clearRuntimeCache(bookId: string): Promise<void> {
+    try {
+      const bookDir = this.state.bookDir(bookId);
+      const runtimeDir = join(bookDir, "story", "runtime");
+      
+      // 删除 runtime 目录下的所有文件
+      try {
+        const files = await readdir(runtimeDir);
+        for (const file of files) {
+          await unlink(join(runtimeDir, file)).catch(() => {});
+        }
+      } catch {
+        // 目录不存在则忽略
+      }
+      
+      this.config.logger?.info(`[clearRuntimeCache] Cleared runtime cache for: ${bookId}`);
+    } catch (error) {
+      this.config.logger?.warn(`[clearRuntimeCache] Failed to clear cache: ${error}`);
+    }
   }
 
   async updateChapterPlans(bookId: string): Promise<void> {
