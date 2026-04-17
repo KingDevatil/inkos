@@ -22,6 +22,16 @@ const WRITE_CHAPTER_STEPS = [
   "更新章节索引与快照",
 ] as const;
 
+const REGENERATE_OUTLINE_STEPS = [
+  "读取现有设定",
+  "备份剧情规划文件",
+  "重新生成卷纲",
+  "保存新卷纲文件",
+  "解析分卷信息",
+  "更新分卷元数据",
+  "清理运行时缓存",
+] as const;
+
 type StepStatus = "pending" | "active" | "done";
 
 interface ProgressSectionProps {
@@ -29,7 +39,7 @@ interface ProgressSectionProps {
 }
 
 export function ProgressSection({ sse }: ProgressSectionProps) {
-  const [operation, setOperation] = useState<"idle" | "init" | "write">("idle");
+  const [operation, setOperation] = useState<"idle" | "init" | "write" | "regenerate-outline">("idle");
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
   const [activeStep, setActiveStep] = useState<string | null>(null);
 
@@ -46,11 +56,20 @@ export function ProgressSection({ sse }: ProgressSectionProps) {
       setOperation("write");
       setCompletedSteps(new Set());
       setActiveStep(null);
-    } else if (last.event === "book:created" || last.event === "write:complete") {
+    } else if (last.event === "outline:regenerate:start") {
+      setOperation("regenerate-outline");
+      setCompletedSteps(new Set());
+      setActiveStep(null);
+    } else if (last.event === "book:created" || last.event === "write:complete" || last.event === "outline:regenerate:complete") {
       // Mark all steps done
-      const steps = operation === "init" ? INIT_BOOK_STEPS : WRITE_CHAPTER_STEPS;
+      const steps = operation === "init" ? INIT_BOOK_STEPS
+        : operation === "write" ? WRITE_CHAPTER_STEPS
+        : operation === "regenerate-outline" ? REGENERATE_OUTLINE_STEPS
+        : [];
       setCompletedSteps(new Set(steps));
       setActiveStep(null);
+      // Reset operation after a delay
+      setTimeout(() => setOperation("idle"), 2000);
     } else if (last.event === "log") {
       const data = last.data as { message?: string } | null;
       const message = data?.message;
@@ -71,6 +90,7 @@ export function ProgressSection({ sse }: ProgressSectionProps) {
 
   const steps = operation === "init" ? INIT_BOOK_STEPS
     : operation === "write" ? WRITE_CHAPTER_STEPS
+    : operation === "regenerate-outline" ? REGENERATE_OUTLINE_STEPS
     : null;
 
   if (!steps) return null;

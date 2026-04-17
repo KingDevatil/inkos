@@ -35,7 +35,8 @@ import {
   BookOpen,
   List,
   Play,
-  MessageSquare
+  MessageSquare,
+  Loader2
 } from "lucide-react";
 
 interface ChapterMeta {
@@ -441,6 +442,7 @@ export function BookDetail({
   const [volumeOutlineRunId, setVolumeOutlineRunId] = useState<string | null>(null);
   const [generatedVolumeOutline, setGeneratedVolumeOutline] = useState("");
   const [showVolumeOutlinePreview, setShowVolumeOutlinePreview] = useState(false);
+  const [regenerateLogs, setRegenerateLogs] = useState<string[]>([]);
   const [volumePlans, setVolumePlans] = useState<any>(null);
   const [loadingVolumePlans, setLoadingVolumePlans] = useState(false);
   const [reparsingVolumePlans, setReparsingVolumePlans] = useState(false);
@@ -676,7 +678,7 @@ export function BookDetail({
   useEffect(() => {
     const recentMessages = sse.messages.slice(-10);
     for (const message of recentMessages) {
-      const data = message.data as { bookId?: string; volumeId?: number; error?: string; runId?: string } | null;
+      const data = message.data as { bookId?: string; volumeId?: number; error?: string; runId?: string; message?: string; level?: string } | null;
 
       // 处理 run 完成事件
       if (data?.runId) {
@@ -686,6 +688,29 @@ export function BookDetail({
         if (data.runId === volumeOutlineRunId) {
           setVolumeOutlineRunId(null);
         }
+      }
+
+      // 处理重新生成卷纲的日志（当 regeneratingVolumeOutline 为 true 时接收所有日志）
+      if (message.event === "log" && regeneratingVolumeOutline) {
+        const logMessage = data?.message;
+        if (logMessage) {
+          setRegenerateLogs(prev => [...prev, logMessage]);
+        }
+      }
+
+      // 处理重新生成卷纲完成事件
+      if (message.event === "outline:regenerate:complete" && data?.bookId === bookId) {
+        setRegeneratingVolumeOutline(false);
+        showAlertDialog("卷纲重新生成完成");
+        // 清空日志
+        setTimeout(() => setRegenerateLogs([]), 3000);
+      }
+
+      // 处理重新生成卷纲错误事件
+      if (message.event === "outline:regenerate:error" && data?.bookId === bookId) {
+        setRegeneratingVolumeOutline(false);
+        showAlertDialog(data?.error || "卷纲重新生成失败");
+        setTimeout(() => setRegenerateLogs([]), 3000);
       }
 
       // 处理分卷卷纲生成事件
@@ -704,7 +729,7 @@ export function BookDetail({
         }
       }
     }
-  }, [sse.messages, bookId, outlineRunId, volumeOutlineRunId]);
+  }, [sse.messages, bookId, outlineRunId, volumeOutlineRunId, regeneratingVolumeOutline]);
 
   // 自动加载卷纲
   useEffect(() => {
@@ -2519,13 +2544,36 @@ export function BookDetail({
                   </button>
                 </div>
               </div>
+
+              {/* Execution Logs */}
+              {regeneratingVolumeOutline && (
+                <div className="border border-border/50 rounded-lg p-4 bg-secondary/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Loader2 size={16} className="animate-spin text-primary" />
+                    <span className="text-sm font-medium">执行中...</span>
+                  </div>
+                  <div className="h-32 overflow-y-auto font-mono text-xs bg-background rounded p-3 border border-border/30">
+                    {regenerateLogs.length === 0 ? (
+                      <span className="text-muted-foreground">等待执行...</span>
+                    ) : (
+                      regenerateLogs.map((log, index) => (
+                        <div key={index} className="py-0.5">
+                          <span className="text-muted-foreground">[{new Date().toLocaleTimeString()}]</span>{' '}
+                          <span className="text-foreground">{log}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Footer */}
             <div className="flex justify-end p-6 border-t border-border/50 shrink-0 bg-card rounded-b-2xl">
               <button
                 onClick={() => setShowVolumeOutlineRegenerate(false)}
-                className="px-4 py-2 text-sm font-bold bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-all border border-border/50 mr-2"
+                disabled={regeneratingVolumeOutline}
+                className="px-4 py-2 text-sm font-bold bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-all border border-border/50 mr-2 disabled:opacity-50"
               >
                 取消
               </button>

@@ -302,15 +302,16 @@ ${lastContent.slice(-500)}
     let filtered = content;
 
     // Remove <think>...</think> tags (used by DeepSeek and other models)
-    const thinkRegex = /<think>[\s\S]*?<\/think>/gi;
+    // Handle both closed and unclosed tags
+    const thinkRegex = /<think>[\s\S]*?(?:<\/think>|$)/gi;
     filtered = filtered.replace(thinkRegex, "");
 
     // Remove <thinking>...</thinking> tags (alternative format)
-    const thinkingRegex = /<thinking>[\s\S]*?<\/thinking>/gi;
+    const thinkingRegex = /<thinking>[\s\S]*?(?:<\/thinking>|$)/gi;
     filtered = filtered.replace(thinkingRegex, "");
 
     // Remove <thought>...</thought> tags (another alternative)
-    const thoughtRegex = /<thought>[\s\S]*?<\/thought>/gi;
+    const thoughtRegex = /<thought>[\s\S]*?(?:<\/thought>|$)/gi;
     filtered = filtered.replace(thoughtRegex, "");
 
     // Remove <RichMediaReference>... tags (special format)

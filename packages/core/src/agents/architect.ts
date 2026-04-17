@@ -1603,16 +1603,10 @@ Based on the above settings (which you MUST preserve exactly)${options?.rewriteL
    - Hook types and statuses
 
 ## Output Format
-Use the following exact section markers:
-
-=== story_bible ===
-(Just output the original story bible content unchanged)
+You must output ONLY the following 3 sections with exact markers. DO NOT output story_bible or book_rules sections - they will be preserved separately.
 
 === volume_outline ===
-(Regenerated volume outline)
-
-=== book_rules ===
-(Just output the original book rules unchanged)
+(Regenerated volume outline with complete volume and chapter structure)
 
 === current_state ===
 (Regenerated current state)
@@ -1620,12 +1614,13 @@ Use the following exact section markers:
 === pending_hooks ===
 (Regenerated pending hooks in table format)
 
-## Important Rules
-1. DO NOT modify or extend the story bible - preserve it exactly
-2. DO NOT modify character settings - preserve them exactly
-3. DO follow the book rules in your new plot planning
-4. Create a fresh plot structure that works with the existing settings
-5. Ensure the new outline has clear progression and satisfying pacing`
+## CRITICAL RULES
+1. ONLY output the 3 sections above (volume_outline, current_state, pending_hooks)
+2. DO NOT output story_bible or book_rules - they are preserved separately
+3. DO NOT use <think> tags or include thinking process in output
+4. Start immediately with "=== volume_outline ===" marker
+5. Ensure each section has substantial content (at least 500 characters)
+6. Create a fresh plot structure that works with the existing settings`
       : `你是一位专业的网络小说架构师。你的任务是基于现有设定重新生成剧情规划（卷纲、当前状态、待填坑）。
 
 【世界观设定】（必须保留）
@@ -1671,16 +1666,10 @@ ${instructionBlock}${rewriteLevelBlock}
    - 伏笔类型和状态
 
 【输出格式】
-使用以下精确的章节标记：
-
-=== story_bible ===
-（直接输出原始世界观设定，不做修改）
+你必须只输出以下3个部分，使用精确的章节标记。不要输出 story_bible 或 book_rules 部分 - 它们会被单独保留。
 
 === volume_outline ===
-（重新生成的卷纲）
-
-=== book_rules ===
-（直接输出原始本书规则，不做修改）
+（重新生成的卷纲，包含完整的分卷和章节结构）
 
 === current_state ===
 （重新生成的当前状态）
@@ -1688,30 +1677,100 @@ ${instructionBlock}${rewriteLevelBlock}
 === pending_hooks ===
 （重新生成的待填坑清单，使用表格格式）
 
-【重要规则】
-1. 不要修改或扩展世界观设定 - 原样保留
-2. 不要修改角色设定 - 原样保留
-3. 在新的剧情规划中遵守本书规则
-4. 创建与现有设定兼容的全新剧情结构
-5. 确保新卷纲有清晰的推进和令人满意的节奏`;
+【关键规则】
+1. 只输出上述3个部分（volume_outline, current_state, pending_hooks）
+2. 不要输出 story_bible 或 book_rules - 它们会被单独保留
+3. 不要使用 <think> 标签或在输出中包含思考过程
+4. 立即以 "=== volume_outline ===" 标记开始输出
+5. 确保每个部分都有实质性内容（至少500字符）
+6. 创建与现有设定兼容的全新剧情结构`;
 
     this.ctx.logger?.info(`[regenerateOutline] Regenerating outline for book "${book.id}"`);
 
-    const response = await this.chat([
-      { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: resolvedLanguage === "en"
-          ? `Please regenerate the complete plot planning for "${book.title}" based on the existing settings.`
-          : `请基于现有设定，为《${book.title}》重新生成完整的剧情规划。`,
-      },
-    ], { maxTokens: 32000, temperature: options?.temperature ?? 0.8 });
-
-    // Save to cache for debugging
+    // Use auto-continuation for large books
     const cache = new LlmOutputCache(this.ctx.projectRoot);
-    const tempFilePath = await cache.savePart(response.content, 0);
-    this.ctx.logger?.info(`[regenerateOutline] LLM output saved to: ${tempFilePath}`);
+    await cache.initialize();
 
-    return this.parseSections(response.content);
+    let fullContent = "";
+    let partIndex = 0;
+    let isComplete = false;
+    const maxParts = 3; // Maximum 3 parts to prevent infinite loops
+
+    while (!isComplete && partIndex < maxParts) {
+      const continuationPrompt = partIndex === 0
+        ? (resolvedLanguage === "en"
+            ? `Please regenerate the complete plot planning for "${book.title}" based on the existing settings.`
+            : `请基于现有设定，为《${book.title}》重新生成完整的剧情规划。`)
+        : (resolvedLanguage === "en"
+            ? `[CONTINUATION PART ${partIndex + 1}] Continue from where you left off. Complete the remaining sections.`
+            : `【续写第${partIndex + 1}部分】请从上次中断处继续，完成剩余的内容。`);
+
+      this.ctx.logger?.info(`[regenerateOutline] Generating part ${partIndex + 1}...`);
+
+      const response = await this.chat([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: continuationPrompt },
+      ], { maxTokens: 32000, temperature: options?.temperature ?? 0.8 });
+
+      const filteredContent = cache.filterThinkingTags(response.content);
+      await cache.savePart(filteredContent, partIndex);
+
+      fullContent += filteredContent;
+
+      // Check if content is truncated or incomplete
+      const lastSection = filteredContent.match(/===\s*(\w+)\s*===$/);
+      if (lastSection && lastSection[1] === 'pending_hooks') {
+        isComplete = true;
+        this.ctx.logger?.info(`[regenerateOutline] All sections completed in part ${partIndex + 1}`);
+      } else if (cache.isContentTruncated(filteredContent)) {
+        this.ctx.logger?.info(`[regenerateOutline] Part ${partIndex + 1} appears truncated, continuing...`);
+        partIndex++;
+      } else {
+        isComplete = true;
+        this.ctx.logger?.info(`[regenerateOutline] Content appears complete`);
+      }
+    }
+
+    this.ctx.logger?.info(`[regenerateOutline] Total parts generated: ${partIndex + 1}`);
+    return this.parseSectionsRegenerate(fullContent);
+  }
+
+  private parseSectionsRegenerate(content: string): ArchitectOutput {
+    const cache = new LlmOutputCache(this.ctx.projectRoot);
+    const parseResult = cache.parseSections(content);
+
+    // Log available sections for debugging
+    this.ctx.logger?.info(`[parseSectionsRegenerate] Available sections: ${Array.from(parseResult.sections.keys()).join(', ')}`);
+    this.ctx.logger?.info(`[parseSectionsRegenerate] Filtered content preview: ${parseResult.filteredContent.slice(0, 500)}...`);
+
+    const volumeOutline = cache.extractSection(parseResult, 'volume_outline', { required: false }) || "";
+    const currentState = cache.extractSection(parseResult, 'current_state', { required: false }) || "";
+    const pendingHooks = cache.extractSection(parseResult, 'pending_hooks', { required: false }) || "";
+
+    // If any section is missing, try fallback extraction from raw content
+    if (!volumeOutline || !currentState || !pendingHooks) {
+      this.ctx.logger?.warn(`[parseSectionsRegenerate] Some sections missing, attempting fallback extraction`);
+
+      // Try to extract sections using simple regex patterns
+      const volumeOutlineMatch = content.match(/(?:volume_outline|卷纲)[\s\S]*?(?=(?:current_state|pending_hooks|当前状态|待填坑)|\s*$)/i);
+      const currentStateMatch = content.match(/(?:current_state|当前状态)[\s\S]*?(?=(?:pending_hooks|待填坑)|\s*$)/i);
+      const pendingHooksMatch = content.match(/(?:pending_hooks|待填坑)[\s\S]*?$/i);
+
+      return {
+        storyBible: "",
+        volumeOutline: volumeOutline || volumeOutlineMatch?.[0] || "",
+        bookRules: "",
+        currentState: currentState || currentStateMatch?.[0] || "",
+        pendingHooks: pendingHooks || pendingHooksMatch?.[0] || "",
+      };
+    }
+
+    return {
+      storyBible: "", // Not regenerated, will be ignored by caller
+      volumeOutline,
+      bookRules: "", // Not regenerated, will be ignored by caller
+      currentState,
+      pendingHooks,
+    };
   }
 }

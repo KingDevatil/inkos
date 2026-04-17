@@ -694,7 +694,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       // 使用新的 regeneratePlotPlanning 方法生成三件套，传入重写幅度
-      await pipeline.regeneratePlotPlanning(id, { 
+      await pipeline.regeneratePlotPlanning(id, {
         instruction: body.intent,
         rewriteLevel: body.rewriteLevel as "low" | "medium" | "high" | "extend" | undefined
       });
@@ -2577,26 +2577,62 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // Initialize metadata storage
   const initVolumePlansMeta = async () => {
     if (metaInitialized) return;
-    
+
     try {
       // Load all existing metadata from book story directories
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       const booksDir = pipeline["state"].booksDir;
-      
+
       if (existsSync(booksDir)) {
         const books = await readdir(booksDir);
         for (const book of books) {
           const bookMetaPath = join(booksDir, book, "story", ".volume-plans-meta.json");
           if (existsSync(bookMetaPath)) {
-            const content = await readFile(bookMetaPath, "utf-8");
-            volumePlansMeta[book] = JSON.parse(content);
+            try {
+              const content = await readFile(bookMetaPath, "utf-8");
+              const parsed = JSON.parse(content);
+
+              // 处理格式不一致的情况：旧数据可能是 { volumePlans: [...] } 或直接的数组
+              if (Array.isArray(parsed)) {
+                // 旧格式：直接是数组
+                volumePlansMeta[book] = {
+                  volumePlans: parsed.map((vp: any) => ({
+                    volumeId: vp.volumeId,
+                    title: vp.title,
+                    chapterRange: vp.chapterRange,
+                    detailOutlineGenerated: vp.detailOutlineGenerated ?? false,
+                    detailOutlineFile: vp.detailOutlineFile,
+                    lastGeneratedAt: vp.lastGeneratedAt
+                  })),
+                  lastParsedAt: new Date().toISOString()
+                };
+              } else if (parsed.volumePlans && Array.isArray(parsed.volumePlans)) {
+                // 新格式：{ volumePlans: [...], lastParsedAt: "..." }
+                // 确保每个 volumePlan 都有必要的字段
+                volumePlansMeta[book] = {
+                  volumePlans: parsed.volumePlans.map((vp: any) => ({
+                    volumeId: vp.volumeId,
+                    title: vp.title,
+                    chapterRange: vp.chapterRange,
+                    detailOutlineGenerated: vp.detailOutlineGenerated ?? false,
+                    detailOutlineFile: vp.detailOutlineFile,
+                    lastGeneratedAt: vp.lastGeneratedAt
+                  })),
+                  lastParsedAt: parsed.lastParsedAt || new Date().toISOString()
+                };
+              } else {
+                console.warn(`Invalid volume plans metadata format for book ${book}:`, parsed);
+              }
+            } catch (parseError) {
+              console.warn(`Failed to parse volume plans metadata for book ${book}:`, parseError);
+            }
           }
         }
       }
     } catch (e) {
       console.warn("Failed to initialize volume plans metadata:", e);
     }
-    
+
     metaInitialized = true;
   };
   
@@ -2621,10 +2657,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     // Check if we have cached metadata for this book
     const bookMeta = volumePlansMeta[id];
-    if (bookMeta) {
+    if (bookMeta && bookMeta.volumePlans && bookMeta.volumePlans.length > 0) {
       // Return cached metadata with generation status
-      return c.json({ 
-        ok: true, 
+      return c.json({
+        ok: true,
         volumePlans: bookMeta.volumePlans.map((vp: any) => ({
           ...vp,
           detailOutlineGenerated: vp.detailOutlineGenerated

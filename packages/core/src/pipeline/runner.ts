@@ -413,11 +413,42 @@ export class PipelineRunner {
     await this.writeStoryFile(bookId, "pending_hooks.md", result.pendingHooks);
 
     // 5. 解析 volume_outline 生成分卷元数据
+    this.logInfo(language, {
+      zh: "正在解析卷纲...",
+      en: "Parsing volume outline...",
+    });
     const { volumePlans } = await architect.parseVolumeOutline(result.volumeOutline);
+    
+    if (!volumePlans || volumePlans.length === 0) {
+      this.logInfo(language, {
+        zh: "警告：未能从卷纲中解析出分卷信息",
+        en: "Warning: Failed to parse volume plans from outline",
+      });
+    } else {
+      this.logInfo(language, {
+        zh: `成功解析 ${volumePlans.length} 个分卷`,
+        en: `Successfully parsed ${volumePlans.length} volumes`,
+      });
+    }
 
-    // 6. 保存 .volume-plans-meta.json
+    // 6. 保存 .volume-plans-meta.json（与 server.ts 格式保持一致）
     const metaPath = join(bookDir, "story", ".volume-plans-meta.json");
-    await writeFile(metaPath, JSON.stringify({ volumePlans }, null, 2), "utf-8");
+    const volumePlansWithStatus = (volumePlans || []).map((vp: any) => ({
+      volumeId: vp.volumeId,
+      title: vp.title,
+      chapterRange: vp.chapterRange,
+      detailOutlineGenerated: false,
+      detailOutlineFile: undefined,
+      lastGeneratedAt: undefined
+    }));
+    await writeFile(metaPath, JSON.stringify({
+      volumePlans: volumePlansWithStatus,
+      lastParsedAt: new Date().toISOString()
+    }, null, 2), "utf-8");
+    this.logInfo(language, {
+      zh: `已保存分卷元数据到: ${metaPath}`,
+      en: `Saved volume plans metadata to: ${metaPath}`,
+    });
 
     // 7. 清理 runtime 缓存
     await this.clearRuntimeCache(bookId);
