@@ -1586,11 +1586,14 @@ ${instructionBlock}${rewriteLevelBlock}
 ## Your Task
 Based on the above settings (which you MUST preserve exactly)${options?.rewriteLevel ? ` and the specified rewrite level` : ``}, regenerate the complete plot planning:
 
-1. **volume_outline.md** - Volume/chapter structure with:
-   - Volume divisions and themes
-   - Chapter ranges for each volume
-   - Core conflicts and turning points
-   - Ensure pacing fits the target platform
+1. **volume_outline.md** - Volume plan (STRICTLY follow this format):
+   - For each volume include: title, chapter range, core conflict, key turning points, and payoff goal
+   - DO NOT write detailed chapter-by-chapter summaries - keep it volume-level only
+
+   ### Golden First Three Chapters Rule (MUST follow for chapters 1-3)
+   - Chapter 1: throw the core conflict immediately; no large background dump
+   - Chapter 2: show the core edge / ability / leverage that answers Chapter 1's pressure
+   - Chapter 3: establish the first concrete short-term goal that gives readers a reason to continue
 
 2. **current_state.md** - Current narrative state:
    - Current plot position
@@ -1649,11 +1652,14 @@ ${instructionBlock}${rewriteLevelBlock}
 【你的任务】
 基于以上设定（必须严格保留）${options?.rewriteLevel ? `和指定的重写幅度` : ``}，重新生成完整的剧情规划：
 
-1. **volume_outline.md** - 卷纲规划：
-   - 分卷划分和主题
-   - 每卷的章节范围
-   - 核心冲突和转折点
-   - 确保节奏符合目标平台特点
+1. **volume_outline.md** - 卷纲规划（严格按照以下格式）：
+   - 每卷包含：卷名、章节范围、核心冲突、关键转折、收益目标
+   - 不需要详细的每章剧情，只保留卷级概览
+
+   ### 黄金三章法则（前三章必须遵循）
+   - 第1章：抛出核心冲突（主角立即面临困境/危机/选择），禁止大段背景灌输
+   - 第2章：展示金手指/核心能力（主角如何应对第1章的困境），让读者看到爽点预期
+   - 第3章：明确短期目标（主角确立第一个具体可达成的目标），给读者追读理由
 
 2. **current_state.md** - 当前状态：
    - 当前剧情位置
@@ -1687,52 +1693,32 @@ ${instructionBlock}${rewriteLevelBlock}
 
     this.ctx.logger?.info(`[regenerateOutline] Regenerating outline for book "${book.id}"`);
 
-    // Use auto-continuation for large books
+    // Save raw LLM output to cache for debugging (keep think tags for analysis)
     const cache = new LlmOutputCache(this.ctx.projectRoot);
     await cache.initialize();
 
-    let fullContent = "";
-    let partIndex = 0;
-    let isComplete = false;
-    const maxParts = 3; // Maximum 3 parts to prevent infinite loops
+    const userPrompt = resolvedLanguage === "en"
+      ? `Please regenerate the complete plot planning for "${book.title}" based on the existing settings.`
+      : `请基于现有设定，为《${book.title}》重新生成完整的剧情规划。`;
 
-    while (!isComplete && partIndex < maxParts) {
-      const continuationPrompt = partIndex === 0
-        ? (resolvedLanguage === "en"
-            ? `Please regenerate the complete plot planning for "${book.title}" based on the existing settings.`
-            : `请基于现有设定，为《${book.title}》重新生成完整的剧情规划。`)
-        : (resolvedLanguage === "en"
-            ? `[CONTINUATION PART ${partIndex + 1}] Continue from where you left off. Complete the remaining sections.`
-            : `【续写第${partIndex + 1}部分】请从上次中断处继续，完成剩余的内容。`);
+    const response = await this.chat([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ], { maxTokens: 64000, temperature: options?.temperature ?? 0.8 }); // Increased to 64000 for large books
 
-      this.ctx.logger?.info(`[regenerateOutline] Generating part ${partIndex + 1}...`);
+    // Save raw content (with think tags) for debugging
+    await cache.savePart(response.content, 0);
+    this.ctx.logger?.info(`[regenerateOutline] Raw LLM output saved, length: ${response.content.length}`);
 
-      const response = await this.chat([
-        { role: "system", content: systemPrompt },
-        { role: "user", content: continuationPrompt },
-      ], { maxTokens: 32000, temperature: options?.temperature ?? 0.8 });
+    // Filter think tags when parsing
+    const filteredContent = cache.filterThinkingTags(response.content);
 
-      const filteredContent = cache.filterThinkingTags(response.content);
-      await cache.savePart(filteredContent, partIndex);
-
-      fullContent += filteredContent;
-
-      // Check if content is truncated or incomplete
-      const lastSection = filteredContent.match(/===\s*(\w+)\s*===$/);
-      if (lastSection && lastSection[1] === 'pending_hooks') {
-        isComplete = true;
-        this.ctx.logger?.info(`[regenerateOutline] All sections completed in part ${partIndex + 1}`);
-      } else if (cache.isContentTruncated(filteredContent)) {
-        this.ctx.logger?.info(`[regenerateOutline] Part ${partIndex + 1} appears truncated, continuing...`);
-        partIndex++;
-      } else {
-        isComplete = true;
-        this.ctx.logger?.info(`[regenerateOutline] Content appears complete`);
-      }
+    // Check if content is truncated
+    if (cache.isContentTruncated(response.content)) {
+      this.ctx.logger?.warn(`[regenerateOutline] Content may be truncated. Consider reducing target chapters or increasing maxTokens.`);
     }
 
-    this.ctx.logger?.info(`[regenerateOutline] Total parts generated: ${partIndex + 1}`);
-    return this.parseSectionsRegenerate(fullContent);
+    return this.parseSectionsRegenerate(filteredContent);
   }
 
   private parseSectionsRegenerate(content: string): ArchitectOutput {
