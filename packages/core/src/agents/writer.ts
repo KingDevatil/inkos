@@ -246,6 +246,11 @@ export class WriterAgent extends BaseAgent {
     // Scale maxTokens to chapter word count (Chinese ≈ 1.5 tokens/char)
     const creativeMaxTokens = Math.max(8192, Math.ceil(targetWords * 2));
 
+    this.logInfo(resolvedLanguage, {
+      zh: `正在调用 LLM 创作正文（maxTokens: ${creativeMaxTokens}）...`,
+      en: `Calling LLM for creative writing (maxTokens: ${creativeMaxTokens})...`,
+    });
+
     const creativeResponse = await this.chat(
       [
         { role: "system", content: creativeSystemPrompt },
@@ -253,7 +258,18 @@ export class WriterAgent extends BaseAgent {
       ],
       { maxTokens: creativeMaxTokens, temperature: creativeTemperature },
     );
+
+    this.logInfo(resolvedLanguage, {
+      zh: `LLM 正文创作完成（${creativeResponse.usage?.completionTokens ?? 0} tokens）`,
+      en: `LLM creative writing completed (${creativeResponse.usage?.completionTokens ?? 0} tokens)`,
+    });
+
     const creativeUsage = creativeResponse.usage;
+
+    this.logInfo(resolvedLanguage, {
+      zh: `正在解析创作输出...`,
+      en: `Parsing creative output...`,
+    });
 
     const creative = parseCreativeOutput(chapterNumber, creativeResponse.content, resolvedLengthSpec.countingMode);
 
@@ -541,6 +557,12 @@ export class WriterAgent extends BaseAgent {
       zh: `阶段 2a：提取第${params.chapterNumber}章事实`,
       en: `Phase 2a: observing facts for chapter ${params.chapterNumber}`,
     });
+
+    this.logInfo(resolvedLang, {
+      zh: `正在调用 LLM 提取事实...`,
+      en: `Calling LLM for fact extraction...`,
+    });
+
     const observerResponse = await this.chat(
       [
         { role: "system", content: observerSystem },
@@ -548,6 +570,12 @@ export class WriterAgent extends BaseAgent {
       ],
       { maxTokens: 4096, temperature: 0.5 },
     );
+
+    this.logInfo(resolvedLang, {
+      zh: `事实提取完成（${observerResponse.usage?.completionTokens ?? 0} tokens）`,
+      en: `Fact extraction completed (${observerResponse.usage?.completionTokens ?? 0} tokens)`,
+    });
+
     const observations = observerResponse.content;
 
     // Phase 2b: Reflector — merge observations into truth files
@@ -588,6 +616,11 @@ export class WriterAgent extends BaseAgent {
     // Settler outputs all truth files — scale with content size
     const settlerMaxTokens = Math.max(8192, Math.ceil(params.content.length * 0.8));
 
+    this.logInfo(resolvedLang, {
+      zh: `正在调用 LLM 回写真相文件（maxTokens: ${settlerMaxTokens}）...`,
+      en: `Calling LLM to update truth files (maxTokens: ${settlerMaxTokens})...`,
+    });
+
     const response = await this.chat(
       [
         { role: "system", content: settlerSystem },
@@ -595,6 +628,11 @@ export class WriterAgent extends BaseAgent {
       ],
       { maxTokens: settlerMaxTokens, temperature: 0.3 },
     );
+
+    this.logInfo(resolvedLang, {
+      zh: `真相文件回写完成（${response.usage?.completionTokens ?? 0} tokens）`,
+      en: `Truth files update completed (${response.usage?.completionTokens ?? 0} tokens)`,
+    });
 
     let mergedSettlement: ReturnType<typeof parseSettlementOutput> & {
       runtimeStateDelta?: RuntimeStateDelta;
