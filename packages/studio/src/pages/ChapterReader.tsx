@@ -217,7 +217,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
         ) : (
           <article className="prose prose-zinc dark:prose-invert max-w-none">
             {paragraphs.map((para, i) => (
-              <p key={i} className="font-serif text-lg md:text-xl leading-[1.8] text-foreground/90 mb-8 first-letter:text-2xl first-letter:font-bold first-letter:text-primary/40">
+              <p key={i} className="font-serif text-lg md:text-xl leading-[1.8] text-foreground/90 mb-8">
                 {para}
               </p>
             ))}
