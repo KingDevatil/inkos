@@ -4,6 +4,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@mariozechner/pi-ai': 0.67.1
+  '@mariozechner/pi-agent-core': 0.67.1
+
 importers:
 
   .: {}
@@ -63,14 +67,17 @@ importers:
   packages/core:
     dependencies:
       '@mariozechner/pi-agent-core':
-        specifier: ^0.67.1
-        version: 0.67.2(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)
+        specifier: 0.67.1
+        version: 0.67.1(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)
       '@mariozechner/pi-ai':
-        specifier: ^0.67.1
-        version: 0.67.2(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)
+        specifier: 0.67.1
+        version: 0.67.1(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
+      epub-gen-memory:
+        specifier: ^1.0.10
+        version: 1.1.2
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
@@ -977,12 +984,12 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@mariozechner/pi-agent-core@0.67.2':
-    resolution: {integrity: sha512-JlrWk69DMzTxF8arE8Wqj132FTqUpGmGIC1+/eIvvZ4IERAYIXLjuPznSlD+CEGKwSjmcmAsMn8UlkYeva3U+w==}
+  '@mariozechner/pi-agent-core@0.67.1':
+    resolution: {integrity: sha512-hs1xCimrlhXY+DszumOGLpM73NuKgt3/N7Wepr7hzFrxqDNPCfAk7z4QqiRqs5ChKlT0xd+QAA4sk8hbfIqNAA==}
     engines: {node: '>=20.0.0'}
 
-  '@mariozechner/pi-ai@0.67.2':
-    resolution: {integrity: sha512-2RZD5GYj1WjLww/m6jN4BIJiJ9qOZLsq4jBecdcnMKOpnxUXYzEAYN8wfRR1H5+5cGOY2AfNkXU3AnPOkiL9Eg==}
+  '@mariozechner/pi-ai@0.67.1':
+    resolution: {integrity: sha512-4ShQ+g3uH01oCEoM4GaOcXricR4BG5Yrg2Ii7aIOXDJl0tYtH6vcNuR4mxhu7vtH/wuIUuugvT0z621O0Y66ug==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
@@ -5851,9 +5858,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@mariozechner/pi-agent-core@0.67.2(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)':
+  '@mariozechner/pi-agent-core@0.67.1(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)':
     dependencies:
-      '@mariozechner/pi-ai': 0.67.2(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)
+      '@mariozechner/pi-ai': 0.67.1(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -5863,7 +5870,7 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-ai@0.67.2(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)':
+  '@mariozechner/pi-ai@0.67.1(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.20.0)(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.73.0(zod@3.25.76)
       '@aws-sdk/client-bedrock-runtime': 3.1030.0
