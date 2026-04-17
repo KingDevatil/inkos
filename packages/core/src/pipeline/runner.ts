@@ -376,6 +376,7 @@ export class PipelineRunner {
     bookId: string,
     options?: {
       instruction?: string;
+      rewriteLevel?: "low" | "medium" | "high";
     }
   ): Promise<void> {
     const book = await this.state.loadBookConfig(bookId);
@@ -400,7 +401,7 @@ export class PipelineRunner {
     const result = await architect.regeneratePlotPlanning(
       book,
       { storyBible, characters, bookRules },
-      { instruction: options?.instruction }
+      { instruction: options?.instruction, rewriteLevel: options?.rewriteLevel }
     );
 
     // 4. 保存新文件

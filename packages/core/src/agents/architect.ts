@@ -1524,6 +1524,7 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
     options?: {
       instruction?: string;
       temperature?: number;
+      rewriteLevel?: "low" | "medium" | "high";
     }
   ): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
@@ -1534,6 +1535,22 @@ IMPORTANT: Output ONLY the JSON, no explanations, no markdown formatting.`
       ? (resolvedLanguage === "en"
           ? `\n\n## Author's Additional Requirements\n${options.instruction}\n`
           : `\n\n## 作者的额外要求\n${options.instruction}\n`)
+      : "";
+
+    // 重写幅度说明
+    const rewriteLevelDesc = {
+      low: resolvedLanguage === "en" 
+        ? "LOW rewrite level: Keep most of the original plot structure, only make minor adjustments to pacing and details."
+        : "低重写幅度：保留大部分原有情节结构，只对节奏和细节进行微调。",
+      medium: resolvedLanguage === "en"
+        ? "MEDIUM rewrite level: Moderately adjust the plot structure, optimize chapter arrangement and conflict settings."
+        : "中重写幅度：适度调整情节结构，优化章节安排和冲突设置。",
+      high: resolvedLanguage === "en"
+        ? "HIGH rewrite level: Completely redesign the plot structure, create a brand new storyline that fits the existing settings."
+        : "高重写幅度：完全重新设计情节结构，创建与现有设定兼容的全新剧情线。",
+    };
+    const rewriteLevelBlock = options?.rewriteLevel
+      ? `\n\n## Rewrite Level\n${rewriteLevelDesc[options.rewriteLevel]}\n`
       : "";
 
     const systemPrompt = resolvedLanguage === "en"
@@ -1555,10 +1572,10 @@ ${existingFoundation.bookRules || "(No specific rules)"}
 - Language: ${book.language}
 - Target Chapters: ${book.targetChapters}
 - Chapter Word Count: ${book.chapterWordCount}
-${instructionBlock}
+${instructionBlock}${rewriteLevelBlock}
 
 ## Your Task
-Based on the above settings (which you MUST preserve exactly), regenerate the complete plot planning:
+Based on the above settings (which you MUST preserve exactly)${options?.rewriteLevel ? ` and the specified rewrite level` : ``}, regenerate the complete plot planning:
 
 1. **volume_outline.md** - Volume/chapter structure with:
    - Volume divisions and themes
@@ -1618,10 +1635,10 @@ ${existingFoundation.bookRules || "（无特定规则）"}
 - 语言：${book.language}
 - 目标章节数：${book.targetChapters}
 - 每章字数：${book.chapterWordCount}
-${instructionBlock}
+${instructionBlock}${rewriteLevelBlock}
 
 【你的任务】
-基于以上设定（必须严格保留），重新生成完整的剧情规划：
+基于以上设定（必须严格保留）${options?.rewriteLevel ? `和指定的重写幅度` : ``}，重新生成完整的剧情规划：
 
 1. **volume_outline.md** - 卷纲规划：
    - 分卷划分和主题

@@ -687,20 +687,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.post("/api/books/:id/regenerate-outline", async (c) => {
     const id = c.req.param("id");
-    const body = await c.req.json<{ intent: string; rewriteLevel?: "low" | "medium" | "high" }>().catch(() => ({ intent: "", rewriteLevel: "medium" }));
-
-    if (!body.intent?.trim()) {
-      return c.json({ error: "Author intent is required" }, 400);
-    }
+    const body = await c.req.json<{ intent?: string; rewriteLevel?: "low" | "medium" | "high" }>().catch(() => ({ intent: "", rewriteLevel: "medium" }));
 
     broadcast("outline:regenerate:start", { bookId: id });
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const rewriteLevel = body.rewriteLevel as "low" | "medium" | "high" | undefined;
-      const result = await pipeline.regenerateOutline(id, body.intent, rewriteLevel);
+      // 使用新的 regeneratePlotPlanning 方法生成三件套，传入重写幅度
+      await pipeline.regeneratePlotPlanning(id, { 
+        instruction: body.intent,
+        rewriteLevel: body.rewriteLevel as "low" | "medium" | "high" | undefined
+      });
       broadcast("outline:regenerate:complete", { bookId: id });
-      return c.json({ ok: true, volumeOutline: result.volumeOutline, tempPath: result.tempPath });
+      return c.json({ ok: true, message: "Plot planning regenerated successfully" });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       broadcast("outline:regenerate:error", { bookId: id, error });
