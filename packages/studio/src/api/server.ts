@@ -737,7 +737,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         broadcast("write:complete", { bookId: id, chapterNumber: result.chapterNumber, status: result.status, title: result.title, wordCount: result.wordCount });
       },
       (e) => {
-        broadcast("write:error", { bookId: id, error: e instanceof Error ? e.message : String(e) });
+        const error = e instanceof Error ? e.message : String(e);
+        // Log error to SSE so it appears in the logs panel
+        sseSink.write({ 
+          level: "error", 
+          tag: "writer", 
+          message: `写章节失败：${error}`,
+          timestamp: new Date().toISOString(),
+        });
+        broadcast("write:error", { bookId: id, error });
       },
     );
 
@@ -756,7 +764,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         broadcast("draft:complete", { bookId: id, chapterNumber: result.chapterNumber, title: result.title, wordCount: result.wordCount });
       },
       (e) => {
-        broadcast("draft:error", { bookId: id, error: e instanceof Error ? e.message : String(e) });
+        const error = e instanceof Error ? e.message : String(e);
+        // Log error to SSE so it appears in the logs panel
+        sseSink.write({ 
+          level: "error", 
+          tag: "writer", 
+          message: `撰写草稿失败：${error}`,
+          timestamp: new Date().toISOString(),
+        });
+        broadcast("draft:error", { bookId: id, error });
       },
     );
 
